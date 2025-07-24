@@ -519,13 +519,20 @@ export default function MainScreen({ navigation }) {
           {compareLoading ? (
             <ActivityIndicator size="large" color="#2E7D32" />
           ) : (
-            compareResults.length > 0 ? compareResults.map((store, idx) => (
-              <View key={idx} style={styles.resultCard}>
-                <Text style={styles.storeName}>{store.branch}</Text>
-                <Text style={styles.storeAddress}>{store.address}</Text>
-                <Text style={styles.totalPrice}>₪{store.totalPrice}</Text>
-              </View>
-            )) : <Text>No results found.</Text>
+            compareResults.length > 0 ? compareResults.map((store, idx) => {
+              return (
+                <View key={idx} style={styles.resultCard}>
+                  <Text style={styles.storeName}>{store.branch}</Text>
+                  <Text style={styles.storeAddress}>{store.address}</Text>
+                  {store.distance !== undefined && store.distance !== null && (
+                    <Text style={styles.storeDistance}>
+                      Distance: {store.distance.toFixed(2)} km
+                    </Text>
+                  )}
+                  <Text style={styles.totalPrice}>₪{store.totalPrice}</Text>
+                </View>
+              );
+            }) : <Text>No results found.</Text>
           )}
           <TouchableOpacity onPress={() => setCompareModalVisible(false)} style={styles.closeButton}>
             <Text style={styles.closeButtonText}>Close</Text>
@@ -847,6 +854,11 @@ const styles = StyleSheet.create({
   storeAddress: {
     fontSize: 14,
     color: '#666',
+    marginBottom: 4,
+  },
+  storeDistance: {
+    fontSize: 14,
+    color: '#1976D2',
     marginBottom: 4,
   },
   totalPrice: {

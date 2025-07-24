@@ -7,6 +7,9 @@ const { Server } = require('socket.io');
 
 require('dotenv').config();
 
+
+console.log('GOOGLE_MAPS_API_KEY:', process.env.GOOGLE_MAPS_API_KEY); // Debug: check if key is loaded
+
 const app = express();
 const server = http.createServer(app); // HTTP server for socket support
 const io = new Server(server, {

@@ -52,7 +52,14 @@ async function trainModel() {
       return await initializeDefaultWeights();
     }
 
-    const X = examples.map(e => [
+    // --- Train/Test Split for Accuracy ---
+    // Shuffle examples
+    const shuffled = examples.sort(() => Math.random() - 0.5);
+    const splitIdx = Math.floor(shuffled.length * 0.8); // 80% train, 20% test
+    const trainSet = shuffled.slice(0, splitIdx);
+    const testSet = shuffled.slice(splitIdx);
+
+    const X_train = trainSet.map(e => [
       e.features.bias,
       e.features.isFavorite,
       e.features.purchasedBefore,
@@ -62,11 +69,37 @@ async function trainModel() {
       e.features.timesWasRejectedByUser,
       e.features.timesWasRejectedByCart
     ]);
-    
-    const y = examples.map(e => e.label);
+    const y_train = trainSet.map(e => e.label);
 
-    // Train the model
-    const trainedWeights = trainLogisticRegression(X, y);
+    const X_test = testSet.map(e => [
+      e.features.bias,
+      e.features.isFavorite,
+      e.features.purchasedBefore,
+      e.features.timesPurchased,
+      e.features.recentlyPurchased,
+      e.features.storeCount,
+      e.features.timesWasRejectedByUser,
+      e.features.timesWasRejectedByCart
+    ]);
+    const y_test = testSet.map(e => e.label);
+
+    // Train the model on the training set
+    const trainedWeights = trainLogisticRegression(X_train, y_train);
+
+    // --- Accuracy Calculation ---
+    let accuracy = null;
+    if (X_test.length > 0) {
+      let correct = 0;
+      for (let i = 0; i < X_test.length; i++) {
+        const prob = predictProbability(X_test[i], trainedWeights);
+        const pred = prob >= 0.5 ? 1 : 0;
+        if (pred === y_test[i]) correct++;
+      }
+      accuracy = correct / X_test.length;
+      console.log(`ML model accuracy on test set: ${(accuracy * 100).toFixed(2)}% (${correct}/${X_test.length})`);
+    } else {
+      console.log('Not enough data for test set accuracy calculation.');
+    }
 
     const featureNames = [
       'bias',

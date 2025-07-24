@@ -26,16 +26,8 @@ async function fetchCompare(locationCity, barcodes) {
     'Referer': 'https://chp.co.il/'
   };
 
-  console.log('[compare] _fetchCompare →', { 
-    shopping_address: params.shopping_address,
-    product_barcode: `${params.product_barcode.split('_').length} barcodes`,
-    params
-  });
-
   try {
     const { data: html } = await axios.get(url, { params, headers });
-    console.log(html); // TEMP: Print the HTML response from chp.co.il
-    console.log('[compare] CHP HTML length:', html.length);
     const $ = cheerio.load(html);
     const results = {};
 
@@ -57,8 +49,12 @@ async function fetchCompare(locationCity, barcodes) {
         }
       }
     });
-    console.log('[compare] CHP results:', results);
-    return Object.values(results).map(r => ({
+    // --- CITY FILTERING FIX ---
+    const cityNormalized = (locationCity || '').trim().toLowerCase();
+    const filteredResults = Object.values(results).filter(r =>
+      r.address && r.address.toLowerCase().includes(cityNormalized)
+    );
+    return filteredResults.map(r => ({
       branch: r.chain, // Changed from r.branch to r.chain
       address: r.address,
       totalPrice: r.totalPrice.toFixed(2),
@@ -91,7 +87,6 @@ router.get('/:listId', async (req, res) => {
     const barcodes = list.items.map(i => i.product?.barcode).filter(Boolean);
     if (barcodes.length === 0) return res.status(400).json({ error: 'No barcodes' });
 
-    console.log('[compare GET] listId:', listId, 'locationCity:', locationCity);
     const results = await fetchCompare(locationCity, barcodes);
     res.json(results);
   } catch (err) {
@@ -107,7 +102,6 @@ router.post('/', async (req, res) => {
     if (!city || !Array.isArray(barcodes) || barcodes.length === 0) {
       return res.status(400).json({ error: 'Missing city or barcodes array' });
     }
-    console.log('[compare POST] barcodes length:', barcodes.length, 'city:', city);
     const results = await fetchCompare(city, barcodes);
     res.json(results);
   } catch (err) {
@@ -121,7 +115,6 @@ router.post('/', async (req, res) => {
 router.post('/price', async (req, res) => {
   try {
     const { city, products } = req.body;
-    console.log('[compare POST /price] city:', city, 'products:', products);
     if (!city || !Array.isArray(products) || products.length === 0) {
       return res.status(400).json({ error: 'Missing city or products array. Please enter a valid city and add products to your list.' });
     }
