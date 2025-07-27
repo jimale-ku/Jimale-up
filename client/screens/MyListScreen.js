@@ -140,7 +140,7 @@ export default function MyListScreen({ navigation }) {
                 key={'grid-3'}
                 data={items}
                 renderItem={renderItem}
-                keyExtractor={item => item._id || item.id || item.name}
+                keyExtractor={(item, idx) => `${item._id || item.id || item.name}_${idx}`}
                 numColumns={3}
                 contentContainerStyle={{ paddingBottom: 60, paddingHorizontal: CARD_MARGIN }}
               />
@@ -179,7 +179,7 @@ export default function MyListScreen({ navigation }) {
                 key={'last-bought'}
                 data={lastBoughtItems}
                 renderItem={renderItem}
-                keyExtractor={item => item._id || item.id || item.name}
+                keyExtractor={(item, idx) => `${item._id || item.id || item.name}_${idx}`}
                 numColumns={3}
                 contentContainerStyle={{ paddingBottom: 60, paddingHorizontal: CARD_MARGIN }}
               />

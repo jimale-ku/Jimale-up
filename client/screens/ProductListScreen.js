@@ -81,7 +81,7 @@ export default function ProductListScreen({ route, navigation }) {
       </TouchableOpacity>
       <FlatList
         data={products}
-        keyExtractor={item => item.productId}
+        keyExtractor={(item, idx) => `${item.productId}_${idx}`}
         renderItem={({ item }) => (
           <View style={styles.productCard}>
             <Image source={{ uri: item.img }} style={styles.productImage} />

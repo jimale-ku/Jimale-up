@@ -73,110 +73,56 @@ exports.getSmartSuggestions = async (req, res) => {
         frequency: 1
       }));
     } else if (type === 'recent') {
-      // Smart logic: get recent product IDs for the group
+      // RECENT: Show items from the most recent completed trip (same as LAST BOUGHT tab)
       const Group = require('../models/Group');
-      const ProductHistory = require('../models/ProductHistory');
+      const PurchaseHistory = require('../models/PurchaseHistory');
       const group = await Group.findById(groupId);
       if (!group) {
-        // Fallback to random product IDs
-        const shuffled = allProducts.sort(() => Math.random() - 0.5);
-        suggestions = shuffled.slice(0, limitNum).map(product => ({
-          productId: product._id || product.productId,
-          barcode: product.barcode || '',
-          type: 'recent'
-        }));
+        suggestions = []; // Return empty if no group
       } else {
-        const memberIds = group.members.map(m => m.user);
-        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        const recentPurchases = await ProductHistory.aggregate([
-          { $match: {
-            userId: { $in: memberIds },
-            action: 'purchased',
-            createdAt: { $gte: thirtyDaysAgo }
-          }},
-          { $sort: { createdAt: -1 } },
-          { $group: {
-            _id: '$productId',
-            lastPurchase: { $first: '$createdAt' },
-            timesPurchased: { $sum: 1 },
-            totalQuantity: { $sum: '$quantity' },
-            lastBuyer: { $first: '$userId' }
-          }},
-          { $sort: { lastPurchase: -1 } },
-          { $limit: limitNum }
-        ]);
-        if (recentPurchases.length === 0) {
-          // Fallback: random products from products.json
-          const shuffled = allProducts
-            .filter(product => getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100')
-            .sort(() => Math.random() - 0.5);
-          suggestions = shuffled.slice(0, 15).map(product => ({
-            productId: product._id || product.productId || product.id,
-            name: product.name || 'Unknown Product',
-            img: getValidImage(product.img),
-            barcode: product.barcode || '',
-            type: 'recent'
-          }));
+        // Get the most recent trip timestamp for this group
+        const lastTrip = await PurchaseHistory.find({ group: groupId })
+          .sort({ boughtAt: -1 })
+          .limit(1);
+        
+        if (lastTrip.length === 0) {
+          // No trips yet - return empty
+          suggestions = [];
         } else {
-          // Map productId to full product details from allProducts
-          suggestions = recentPurchases.map(item => {
+          // Get all items from the most recent trip (same boughtAt timestamp)
+          const lastBoughtAt = lastTrip[0].boughtAt;
+          const lastTripItems = await PurchaseHistory.find({ 
+            group: groupId, 
+            boughtAt: lastBoughtAt 
+          }).sort({ createdAt: -1 });
+          
+          // Map to product details from allProducts (from DB)
+          suggestions = lastTripItems.map(item => {
             const product = allProducts.find(p => (
-              p._id === item._id ||
-              p.productId === item._id ||
-              p.id === item._id
+              p._id === item.product ||
+              p.productId === item.product ||
+              p.id === item.product ||
+              p.name === item.name // Fallback by name
             ));
             return product && getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100'
               ? {
-                  productId: item._id,
-                  name: product?.name || 'Unknown Product',
-                  img: getValidImage(product?.img),
+                  productId: item.product || product._id || product.productId,
+                  name: item.name || product?.name || 'Unknown Product',
+                  img: getValidImage(product?.img) || item.img || '',
                   barcode: product?.barcode || '',
                   type: 'recent',
-                  timesPurchased: item.timesPurchased,
-                  totalQuantity: item.totalQuantity,
-                  lastPurchaseDate: item.lastPurchase,
-                  lastBuyer: item.lastBuyer
+                  quantity: item.quantity || 1,
+                  boughtAt: item.boughtAt,
+                  tripDate: new Date(item.boughtAt).toLocaleDateString()
                 }
               : null;
           }).filter(Boolean);
         }
       }
     } else if (type === 'favorite') {
-      // Smart logic: get items from last 2 trips that are favorited by all group members
       const Group = require('../models/Group');
-      const ProductHistory = require('../models/ProductHistory');
-      const UserFavorites = require('../models/UserFavorites');
       const group = await Group.findById(groupId);
       if (!group) {
-        // Fallback: random products from products.json
-        const shuffled = allProducts
-          .filter(product => getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100')
-          .sort(() => Math.random() - 0.5);
-        suggestions = shuffled.slice(0, 15).map(product => ({
-          productId: product._id || product.productId || product.id,
-          name: product.name || 'Unknown Product',
-          img: getValidImage(product.img),
-          barcode: product.barcode || '',
-          type: 'favorite'
-        }));
-      } else {
-        const memberIds = group.members.map(m => m.user.toString());
-        // Get last 2 trips (distinct purchase sessions by date)
-        const recentPurchases = await ProductHistory.aggregate([
-          { $match: {
-            userId: { $in: memberIds },
-            action: 'purchased'
-          }},
-          { $sort: { createdAt: -1 } },
-          { $group: {
-            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-            products: { $push: '$productId' },
-            createdAt: { $first: '$createdAt' }
-          }},
-          { $sort: { createdAt: -1 } },
-          { $limit: 2 }
-        ]);
-        if (!recentPurchases.length) {
           // Fallback: random products from products.json
           const shuffled = allProducts
             .filter(product => getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100')
@@ -186,104 +132,113 @@ exports.getSmartSuggestions = async (req, res) => {
             name: product.name || 'Unknown Product',
             img: getValidImage(product.img),
             barcode: product.barcode || '',
-            type: 'favorite'
+          type: 'favorite'
           }));
         } else {
-          // Flatten products from last 2 trips
-          const productIds = [...new Set(recentPurchases.flatMap(trip => trip.products))];
-          // For each product, check if all group members have favorited it
-          const favoriteChecks = await Promise.all(productIds.map(async pid => {
-            const favs = await UserFavorites.find({ productId: pid, userId: { $in: memberIds } });
-            return { pid, count: favs.length };
-          }));
-          // Only include products favorited by all group members
-          const qualifyingIds = favoriteChecks.filter(f => f.count === memberIds.length).map(f => f.pid);
-          // Map to product details from products.json
-          suggestions = qualifyingIds.map(pid => {
+        const memberIds = group.members.map(m => m.user.toString());
+        // Get all favorites for this group by any member
+        const groupFavorites = await UserFavorites.find({
+          groupId,
+          userId: { $in: memberIds }
+        }).lean();
+        // Get unique productIds
+        const uniqueProductIds = [...new Set(groupFavorites.map(fav => fav.productId))];
+        // Map to product details from products.json
+        suggestions = uniqueProductIds.map(pid => {
             const product = allProducts.find(p => (
-              p._id === pid ||
-              p.productId === pid ||
-              p.id === pid
+            p._id === pid ||
+            p.productId === pid ||
+            p.id === pid
             ));
             return product && getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100'
               ? {
-                  productId: pid,
+                productId: pid,
                   name: product?.name || 'Unknown Product',
                   img: getValidImage(product?.img),
                   barcode: product?.barcode || '',
-                  type: 'favorite'
+                type: 'favorite'
                 }
               : null;
           }).filter(Boolean);
         }
-      }
     } else if (type === 'frequent') {
-      // Smart logic: show items purchased more than once by group members, sorted by frequency and recency
+      // FREQUENT: Show most frequently bought items in the last 5 trips, boosted by favorite count
       const Group = require('../models/Group');
-      const ProductHistory = require('../models/ProductHistory');
+      const PurchaseHistory = require('../models/PurchaseHistory');
+      const UserFavorites = require('../models/UserFavorites');
       const group = await Group.findById(groupId);
       if (!group) {
-        // Fallback: random products from products.json
-        const shuffled = allProducts
-          .filter(product => getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100')
-          .sort(() => Math.random() - 0.5);
-        suggestions = shuffled.slice(0, 15).map(product => ({
-          productId: product._id || product.productId || product.id,
-          name: product.name || 'Unknown Product',
-          img: getValidImage(product.img),
-          barcode: product.barcode || '',
-          type: 'frequent'
-        }));
+        suggestions = [];
       } else {
-        const memberIds = group.members.map(m => m.user.toString());
-        // Aggregate all purchases by group members
-        const frequentPurchases = await ProductHistory.aggregate([
-          { $match: {
-            userId: { $in: memberIds },
-            action: 'purchased'
-          }},
-          { $group: {
-            _id: '$productId',
-            timesPurchased: { $sum: 1 },
-            lastPurchase: { $max: '$createdAt' },
-            totalQuantity: { $sum: '$quantity' }
-          }},
-          { $match: { timesPurchased: { $gt: 1 } } }, // Only products bought more than once
-          { $sort: { timesPurchased: -1, lastPurchase: -1 } },
-          { $limit: limitNum }
-        ]);
-        if (!frequentPurchases.length) {
-          // Fallback: random products from products.json
-          const shuffled = allProducts
-            .filter(product => getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100')
-            .sort(() => Math.random() - 0.5);
-          suggestions = shuffled.slice(0, 15).map(product => ({
-            productId: product._id || product.productId || product.id,
-            name: product.name || 'Unknown Product',
-            img: getValidImage(product.img),
-            barcode: product.barcode || '',
-            type: 'frequent'
-          }));
+        // 1. Get last 5 trips (unique boughtAt timestamps)
+        const lastTrips = await PurchaseHistory.find({ group: groupId })
+          .sort({ boughtAt: -1 })
+          .distinct('boughtAt');
+        const last5Trips = lastTrips.slice(0, 5);
+        if (last5Trips.length === 0) {
+          suggestions = [];
         } else {
-          suggestions = frequentPurchases.map(item => {
+          // 2. Get all items from those trips
+          const tripItems = await PurchaseHistory.find({ group: groupId, boughtAt: { $in: last5Trips } });
+          // 3. Count frequency for each product (by trip)
+          const freqMap = {};
+          const tripMap = {};
+          tripItems.forEach(item => {
+            const key = item.product?.toString() || item.name;
+            if (!freqMap[key]) {
+              freqMap[key] = { count: 0, lastBought: item.boughtAt, name: item.name, product: item.product, img: item.img, quantity: 0, tripSet: new Set() };
+            }
+            freqMap[key].count += 1;
+            freqMap[key].quantity += item.quantity || 1;
+            freqMap[key].tripSet.add(item.boughtAt.toISOString());
+            if (item.boughtAt > freqMap[key].lastBought) freqMap[key].lastBought = item.boughtAt;
+          });
+          // 4. Get favorite counts for each product in this group
+        const memberIds = group.members.map(m => m.user.toString());
+          const favs = await UserFavorites.find({ groupId, userId: { $in: memberIds } });
+          const favMap = {};
+          favs.forEach(fav => {
+            favMap[fav.productId] = (favMap[fav.productId] || 0) + 1;
+          });
+          // 5. Filter and map to product details
+          let filtered = Object.entries(freqMap).filter(([key, val]) => {
+            if (last5Trips.length === 1) {
+              // Only one trip: show items with quantity > 1
+              return val.quantity > 1;
+        } else {
+              // Multiple trips: show items bought in more than one trip
+              return val.tripSet.size > 1;
+            }
+          });
+          suggestions = filtered.map(([key, val]) => {
             const product = allProducts.find(p => (
-              p._id === item._id ||
-              p.productId === item._id ||
-              p.id === item._id
+              p._id?.toString() === val.product?.toString() ||
+              p.productId?.toString() === val.product?.toString() ||
+              p.id?.toString() === val.product?.toString() ||
+              p.name === val.name
             ));
+            const favoriteCount = favMap[val.product?.toString()] || 0;
             return product && getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100'
               ? {
-                  productId: item._id,
-                  name: product?.name || 'Unknown Product',
-                  img: getValidImage(product?.img),
+                  productId: val.product || product._id || product.productId,
+                  name: val.name || product?.name || 'Unknown Product',
+                  img: getValidImage(product?.img) || val.img || '',
                   barcode: product?.barcode || '',
                   type: 'frequent',
-                  timesPurchased: item.timesPurchased,
-                  totalQuantity: item.totalQuantity,
-                  lastPurchase: item.lastPurchase
+                  frequency: val.count,
+                  quantity: val.quantity,
+                  lastBought: val.lastBought,
+                  favoriteCount,
                 }
               : null;
-          }).filter(Boolean);
+          }).filter(Boolean)
+            .sort((a, b) => {
+              // Sort by frequency desc, then favoriteCount desc, then lastBought desc
+              if (b.frequency !== a.frequency) return b.frequency - a.frequency;
+              if (b.favoriteCount !== a.favoriteCount) return b.favoriteCount - a.favoriteCount;
+              return new Date(b.lastBought) - new Date(a.lastBought);
+            })
+            .slice(0, 10);
         }
       }
     } else {
@@ -814,7 +769,7 @@ exports.markAsPurchased = async (req, res) => {
 // Add product to favorites
 exports.addToFavorites = async (req, res) => {
   try {
-    const { productId } = req.body;
+    const { productId, groupId } = req.body;
     const userId = req.user.id;
 
     if (!productId) {
@@ -823,12 +778,17 @@ exports.addToFavorites = async (req, res) => {
         message: 'Product ID is required'
       });
     }
+    if (!groupId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Group ID is required'
+      });
+    }
 
-    // Since we're using products.json, we need to handle string product IDs
-    // We'll store the productId as a string in UserFavorites
     try {
       await UserFavorites.create({
         userId,
+        groupId,
         productId: productId // Store as string, not ObjectId
       });
 
@@ -859,7 +819,7 @@ exports.addToFavorites = async (req, res) => {
 // Remove product from favorites
 exports.removeFromFavorites = async (req, res) => {
   try {
-    const { productId } = req.body;
+    const { productId, groupId } = req.body;
     const userId = req.user.id;
 
     if (!productId) {
@@ -868,9 +828,16 @@ exports.removeFromFavorites = async (req, res) => {
         message: 'Product ID is required'
       });
     }
+    if (!groupId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Group ID is required'
+      });
+    }
 
     const result = await UserFavorites.deleteOne({
       userId,
+      groupId,
       productId: productId
     });
 
@@ -899,6 +866,7 @@ exports.removeFromFavorites = async (req, res) => {
 exports.checkFavoriteStatus = async (req, res) => {
   try {
     const { productId } = req.params;
+    const { groupId } = req.query;
     const userId = req.user.id;
 
     if (!productId) {
@@ -907,9 +875,16 @@ exports.checkFavoriteStatus = async (req, res) => {
         message: 'Product ID is required'
       });
     }
+    if (!groupId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Group ID is required'
+      });
+    }
 
     const favorite = await UserFavorites.findOne({
       userId,
+      groupId,
       productId: productId
     });
 

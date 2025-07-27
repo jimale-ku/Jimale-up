@@ -18,13 +18,61 @@ async function testScrape() {
     const { data: html } = await axios.get(url, { params, headers });
     console.log('HTML length:', html.length);
     console.log('HTML preview:', html.slice(0, 500));
+    
     const $ = cheerio.load(html);
-    const table = $('table');
-    if (table.length === 0) {
-      console.log('No table found in HTML!');
-    } else {
-      console.log('Table found!');
+    
+    // Test multiple table selectors
+    const tableSelectors = [
+      '.results-table tbody tr',
+      'table tbody tr',
+      '.price-table tbody tr',
+      'table tr'
+    ];
+    
+    let foundTable = false;
+    for (const selector of tableSelectors) {
+      const table = $(selector);
+      if (table.length > 0) {
+        console.log(`Table found using selector: ${selector}`);
+        console.log(`Number of rows: ${table.length}`);
+        foundTable = true;
+        
+        // Test first few rows
+        table.slice(0, 3).each((index, row) => {
+          const tds = $(row).find('td');
+          console.log(`Row ${index + 1}:`, {
+            cells: tds.length,
+            cellTexts: Array.from(tds).map((td, i) => ({ index: i, text: $(td).text().trim() }))
+          });
+        });
+        break;
+      }
     }
+    
+    if (!foundTable) {
+      console.log('No table found with any selector!');
+    }
+    
+    // Test product image extraction
+    const productImgSelectors = [
+      '.product-image img',
+      '.item-image img', 
+      'img[alt*="product"]',
+      'img[src*="product"]',
+      '.product img',
+      '.item img'
+    ];
+    
+    for (const selector of productImgSelectors) {
+      const productImg = $(selector).first();
+      if (productImg.length > 0) {
+        const imageSrc = productImg.attr('src');
+        console.log(`Product image found using selector: ${selector}`);
+        console.log('Image src:', imageSrc);
+        break;
+      }
+    }
+    
   } catch (err) {
     console.error('Scraping error:', err);
   }

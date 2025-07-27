@@ -7,7 +7,7 @@ const cheerio = require('cheerio');
 const StorePriceCache = require('../models/StorePriceCache');
 const { getDistances } = require('../services/distance');
 
-async function fetchCompare(locationCity, barcodes) {
+async function fetchCompare(locationCity, barcode) {
   const streetId = 9000;
   const cityId = 0;
   const url = 'https://chp.co.il/main_page/compare_results';
@@ -15,10 +15,12 @@ async function fetchCompare(locationCity, barcodes) {
     shopping_address: locationCity,
     shopping_address_street_id: streetId,
     shopping_address_city_id: cityId,
-    product_barcode: barcodes.join('_'),
+    product_barcode: barcode, // Search for single product
     from: 0,
     num_results: 30,
   };
+  
+  console.log('[DEBUG] Searching for single barcode:', barcode);
   const headers = {
     'User-Agent': 'Mozilla/5.0',
     'Accept': '*/*',
@@ -39,13 +41,37 @@ async function fetchCompare(locationCity, barcodes) {
         const storeName = $(tds[1]).text().trim();
         const address = $(tds[2]).text().trim();
         const price = parseFloat($(tds[4]).text().trim());
+        
+        // Debug: Log the table structure
+        console.log('[DEBUG] Table row:', {
+          chain,
+          storeName,
+          address,
+          price,
+          totalCells: tds.length,
+          cell3: $(tds[3]).text().trim(),
+          cell4: $(tds[4]).text().trim(),
+          allCells: Array.from(tds).map((td, i) => ({ index: i, text: $(td).text().trim() }))
+        });
+        
         if (!isNaN(price) && storeName) {
           const key = `${storeName} - ${address}`;
           if (!results[key]) {
-            results[key] = { chain, storeName, address, totalPrice: 0, itemsFound: 0 };
+            results[key] = { 
+              chain, 
+              storeName, 
+              address, 
+              totalPrice: 0, 
+              itemsFound: 0,
+              itemPrices: {} // Store individual item prices
+            };
           }
           results[key].totalPrice += price;
           results[key].itemsFound += 1;
+          
+          // Since we're searching for a single product, we know which barcode this price belongs to
+          results[key].itemPrices[barcode] = price;
+          console.log('[DEBUG] Stored price for', barcode, ':', price);
         }
       }
     });
@@ -57,8 +83,9 @@ async function fetchCompare(locationCity, barcodes) {
     return filteredResults.map(r => ({
       branch: r.chain, // Changed from r.branch to r.chain
       address: r.address,
-      totalPrice: r.totalPrice.toFixed(2),
-      itemsFound: r.itemsFound
+      totalPrice: parseFloat(r.totalPrice).toFixed(2), // Proper price formatting
+      itemsFound: r.itemsFound,
+      itemPrices: r.itemPrices || {} // Include individual item prices
     }));
   } catch (err) {
     console.error('[compare] Error fetching/parsing CHP:', err);
@@ -118,30 +145,70 @@ router.post('/price', async (req, res) => {
     if (!city || !Array.isArray(products) || products.length === 0) {
       return res.status(400).json({ error: 'Missing city or products array. Please enter a valid city and add products to your list.' });
     }
-    // For each product, try barcode first, then fallback to name if not found
+    // For each product, search individually and aggregate results
     let allStoreResults = {};
     for (let i = 0; i < products.length; i++) {
       const prod = products[i];
-      let prodResults = await fetchCompare(city, [prod.barcode]);
+      console.log(`[DEBUG] Searching for product ${i + 1}/${products.length}:`, prod.barcode, prod.name);
+      
+      // Search for this specific product
+      let prodResults = await fetchCompare(city, prod.barcode);
+      
       // If no results found by barcode, try by name
-      if (!prodResults || Object.keys(prodResults).length === 0) {
+      if (!prodResults || prodResults.length === 0) {
+        console.log(`[DEBUG] No results for barcode ${prod.barcode}, trying name search`);
         if (prod.name) {
-          prodResults = await fetchCompare(city, [prod.name]);
+          prodResults = await fetchCompare(city, prod.name);
         }
       }
+      
       // Aggregate results by store
-      for (const [storeKey, storeData] of Object.entries(prodResults || {})) {
+      for (const storeData of prodResults || []) {
+        const storeKey = `${storeData.branch} - ${storeData.address}`;
+        
         if (!allStoreResults[storeKey]) {
-          allStoreResults[storeKey] = { ...storeData, totalPrice: 0, itemsFound: 0, foundBarcodes: [] };
+          allStoreResults[storeKey] = { 
+            branch: storeData.branch,
+            address: storeData.address,
+            totalPrice: 0, 
+            itemsFound: 0, 
+            foundBarcodes: [],
+            itemPrices: {},
+            productDetails: {}
+          };
         }
-        allStoreResults[storeKey].totalPrice += storeData.totalPrice || 0;
-        allStoreResults[storeKey].itemsFound += storeData.itemsFound || 0;
-        if (prod.barcode && !allStoreResults[storeKey].foundBarcodes.includes(prod.barcode)) {
-          allStoreResults[storeKey].foundBarcodes.push(prod.barcode);
+        
+        // Add this product's price to the store
+        const productPrice = storeData.itemPrices[prod.barcode] || 0;
+        allStoreResults[storeKey].totalPrice += productPrice;
+        
+        if (productPrice > 0) {
+          allStoreResults[storeKey].itemsFound += 1;
+          if (!allStoreResults[storeKey].foundBarcodes.includes(prod.barcode)) {
+            allStoreResults[storeKey].foundBarcodes.push(prod.barcode);
+          }
         }
+        
+        // Store individual item price
+        allStoreResults[storeKey].itemPrices[prod.barcode] = productPrice;
+        
+        // Store product details including image
+        allStoreResults[storeKey].productDetails[prod.barcode] = {
+          name: prod.name,
+          img: prod.img,
+          price: prod.price
+        };
+        
+        console.log(`[DEBUG] Store ${storeKey}: Added ${prod.name} for ₪${productPrice}`);
       }
     }
     let aggregated = Object.values(allStoreResults);
+    console.log('[DEBUG] Final aggregated results:', aggregated.map(s => ({
+      store: s.branch,
+      totalPrice: s.totalPrice,
+      itemsFound: s.itemsFound,
+      itemPrices: s.itemPrices
+    })));
     if (aggregated.length === 0) {
       return res.status(404).json({ error: 'No stores found for your city and products. Try a different city or product.' });
     }

@@ -8,15 +8,52 @@ const User = require('../models/User');
 exports.getGroupListSummary = async (req, res) => {
   try {
     const groupId = req.params.groupId;
+    console.log(`[DEBUG] Getting summary for group: ${groupId}`);
+    
     const group = await Group.findById(groupId).populate({
       path: 'list',
       populate: { path: 'items', populate: { path: 'addedBy', select: 'username profilePicUrl' } }
     });
+    
     if (!group || !group.list) {
+      console.log(`[DEBUG] Group or list not found for groupId: ${groupId}`);
       return res.status(404).json({ message: 'Group or shared list not found' });
     }
-    // Current list items
-    const currentList = group.list.items;
+    
+    // Current list items - filter to ensure only valid items
+    const currentList = group.list.items
+      .filter(item => 
+        item && 
+        item.name && 
+        item.barcode && 
+        /^[0-9A-Za-z]+$/.test(item.barcode)
+      )
+      .map(item => ({
+        _id: item._id,
+        name: item.name,
+        barcode: item.barcode,
+        quantity: item.quantity || 1,
+        img: item.img || null,
+        icon: item.icon || null,
+        addedBy: item.addedBy,
+        createdAt: item.createdAt,
+        productId: item.productId
+      }));
+    
+    console.log(`[DEBUG] Group ${groupId} has ${group.list.items.length} total items`);
+    console.log(`[DEBUG] Group ${groupId} has ${currentList.length} valid items with barcodes`);
+    console.log(`[DEBUG] Items in group ${groupId}:`, currentList.map(item => `${item.name} (${item.barcode})`));
+    
+    // DEBUG: Check if images are being preserved
+    console.log(`[DEBUG] === CHECKING IMAGES IN CURRENT LIST ===`);
+    currentList.forEach((item, index) => {
+      console.log(`[DEBUG] Item ${index + 1}: ${item.name}`);
+      console.log(`[DEBUG]   - Has img field: ${!!item.img}`);
+      console.log(`[DEBUG]   - Has icon field: ${!!item.icon}`);
+      console.log(`[DEBUG]   - img length: ${item.img ? item.img.length : 0}`);
+      console.log(`[DEBUG]   - icon length: ${item.icon ? item.icon.length : 0}`);
+    });
+    
     // Last bought: get most recent group trip from PurchaseHistory
     const lastTrip = await PurchaseHistory.find({ group: groupId })
       .sort({ boughtAt: -1 })
@@ -29,9 +66,18 @@ exports.getGroupListSummary = async (req, res) => {
       lastBought = await PurchaseHistory.find({ group: groupId, boughtAt: lastBoughtAt });
       lastStore = lastTrip[0].metadata && lastTrip[0].metadata.store ? lastTrip[0].metadata.store : null;
     }
+    
     // Trip count
     const tripCount = await PurchaseHistory.countDocuments({ group: groupId });
-    res.json({ currentList, lastBought, lastStore, tripCount });
+    
+    const result = { currentList, lastBought, lastStore, tripCount };
+    console.log(`[DEBUG] Returning summary for group ${groupId}:`, {
+      currentListCount: currentList.length,
+      lastBoughtCount: lastBought.length,
+      tripCount
+    });
+    
+    res.json(result);
   } catch (err) {
     console.error('Error in getGroupListSummary:', err);
     res.status(500).json({ message: 'Server error' });

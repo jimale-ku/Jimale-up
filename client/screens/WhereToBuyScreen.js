@@ -1,7 +1,8 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import { View, Text, TouchableOpacity, TextInput, FlatList, ActivityIndicator, StyleSheet, Keyboard, Alert, Image, ScrollView } from 'react-native';
 import * as Location from 'expo-location';
 import LottieView from 'lottie-react-native';
+import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 import PersonalListContext from '../services/PersonalListContext';
 
@@ -14,9 +15,15 @@ const WhereToBuyScreen = ({ route, navigation }) => {
   const [loading, setLoading] = useState(false);
   const [stores, setStores] = useState([]);
   const [error, setError] = useState('');
-  const [expandedIdx, setExpandedIdx] = useState(null);
+
   const [showCelebration, setShowCelebration] = useState(false);
   const { completeTrip } = useContext(PersonalListContext);
+
+  useEffect(() => {
+    return () => {
+      console.log('WhereToBuyScreen unmounted!');
+    };
+  }, []);
 
   // Helper to get product details from barcode from the selected products only
   const getProductByBarcode = (barcode) => {
@@ -84,7 +91,8 @@ const WhereToBuyScreen = ({ route, navigation }) => {
           products: products.map(p => ({
             barcode: p.barcode,
             name: p.name,
-            quantity: p.quantity || 1
+            quantity: p.quantity || 1,
+            image: p.image // Add the image field
           })),
           source,
         }),
@@ -92,6 +100,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
       if (!response.ok) throw new Error('Failed to fetch stores');
       const data = await response.json();
       console.log('Store data:', data);
+      console.log('Products with images:', products.map(p => ({ barcode: p.barcode, name: p.name, hasImage: !!p.image })));
       setStores(Array.isArray(data) ? data.slice(0, 5) : (data.stores?.slice(0, 5) || []));
     } catch (e) {
       setError('Could not fetch store data.');
@@ -103,7 +112,9 @@ const WhereToBuyScreen = ({ route, navigation }) => {
   const handleBuy = async (selectedStore) => {
     console.log('Buy button pressed', { tripType, selectedStore });
     if (tripType === 'group' && groupId) {
+      console.log('Entering group trip buy logic');
       try {
+        console.log('About to call API for group complete-trip');
         await api.post(`/groups/${groupId}/list/complete-trip`, {
           store: {
             branch: selectedStore.branch,
@@ -111,16 +122,19 @@ const WhereToBuyScreen = ({ route, navigation }) => {
             totalPrice: selectedStore.totalPrice ?? selectedStore.price ?? null,
           }
         });
+        console.log('API call successful, setting showCelebration to true');
         setShowCelebration(true);
         setTimeout(() => {
+          console.log('Timeout done, hiding celebration and navigating to GroupSharedList');
           setShowCelebration(false);
           navigation.navigate('GroupSharedList', { groupId });
         }, 3000);
       } catch (err) {
+        console.log('Error in group trip buy logic:', err);
         Alert.alert('Error', 'Failed to complete group trip');
       }
     } else if (tripType === 'personal') {
-      console.log('Personal trip buy logic triggered');
+      console.log('Entering personal trip buy logic');
       try {
         completeTrip({
           branch: selectedStore.branch || selectedStore.storeName,
@@ -139,55 +153,64 @@ const WhereToBuyScreen = ({ route, navigation }) => {
     }
   };
 
+  // Get store icon based on store name
+  const getStoreIcon = (storeName) => {
+    const name = storeName?.toLowerCase() || '';
+    if (name.includes('shufersal') || name.includes('שופרסל')) return 'storefront';
+    if (name.includes('rami') || name.includes('רמי')) return 'business';
+    if (name.includes('coop') || name.includes('קואופ')) return 'home';
+    if (name.includes('victory') || name.includes('ויקטורי')) return 'star';
+    if (name.includes('yohananof') || name.includes('יוחננוף')) return 'leaf';
+    return 'storefront'; // default icon
+  };
+
   const renderStore = ({ item, index }) => {
-    const isExpanded = expandedIdx === index;
     // Find products found and not found in this store
     const foundBarcodes = item.foundBarcodes || (item.foundProducts ? item.foundProducts.map(p => p.barcode) : []);
     const foundProducts = products.filter(p => foundBarcodes.includes(p.barcode));
     const notFoundProducts = products.filter(p => !foundBarcodes.includes(p.barcode));
+    
     return (
-      <TouchableOpacity onPress={() => setExpandedIdx(isExpanded ? null : index)} activeOpacity={0.8}>
-        <View style={[styles.storeCard, isExpanded && styles.expandedCard]}>
-          <Text style={styles.storeName}>{item.branch}</Text>
-          <Text style={styles.storeDetail}>כתובת: {item.address}</Text>
-          <Text style={styles.storeDetail}>מחיר כולל: ₪{item.totalPrice ?? item.price ?? 'N/A'}</Text>
-          <Text style={styles.storeDetail}>מוצרים שנמצאו: {item.itemsFound}</Text>
-          {item.distance !== null && item.distance !== undefined && (
-            <Text style={styles.storeDetail}>מרחק: {item.distance} ק"מ</Text>
-          )}
-          {isExpanded && (
-            <View style={styles.expandedSection}>
-              <Text style={styles.sectionHeader}>מוצרים שנמצאו בחנות:</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom: 8}}>
-                {foundProducts.length === 0 && <Text style={styles.notFoundText}>לא נמצאו מוצרים</Text>}
-                {foundProducts.map((prod, idx) => (
-                  <View key={prod.barcode + idx} style={styles.productCard}>
-                    <Image source={prod.img ? { uri: prod.img } : require('../assets/favicon.png')} style={styles.productImg} />
-                    <Text style={styles.productName}>{prod.name}</Text>
-                    {/* If you have per-product price, show here. Otherwise, show only total above. */}
-                  </View>
-                ))}
-              </ScrollView>
-              <Text style={styles.sectionHeader}>מוצרים שלא נמצאו:</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {notFoundProducts.length === 0 && <Text style={styles.foundText}>כל המוצרים נמצאו</Text>}
-                {notFoundProducts.map((prod, idx) => (
-                  <View key={prod.barcode + idx} style={[styles.productCard, styles.notFoundCard]}>
-                    <Image source={prod.img ? { uri: prod.img } : require('../assets/favicon.png')} style={[styles.productImg, {opacity: 0.4}]} />
-                    <Text style={[styles.productName, {color: '#aaa'}]}>{prod.name}</Text>
-                  </View>
-                ))}
-              </ScrollView>
-            </View>
-          )}
-          {/* Buy button for each store */}
-          {(tripType === 'group' && groupId) || tripType === 'personal' ? (
-            <TouchableOpacity style={{ backgroundColor: '#1976D2', borderRadius: 8, padding: 12, alignItems: 'center', marginTop: 12 }} onPress={() => handleBuy(item)}>
-              <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Buy from this Store</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      </TouchableOpacity>
+      <View style={styles.storeCard}>
+        {/* Store Header with Icon */}
+        <TouchableOpacity 
+          onPress={() => navigation.navigate('StoreDetail', { 
+            store: item, 
+            products, 
+            tripType, 
+            groupId, 
+            currentUserId, 
+            groupCreatorId 
+          })} 
+          activeOpacity={0.8}
+          style={styles.storeHeader}
+        >
+          <View style={styles.storeIconContainer}>
+            <Ionicons 
+              name={getStoreIcon(item.branch)} 
+              size={32} 
+              color="#1976D2" 
+            />
+          </View>
+          <View style={styles.storeInfo}>
+            <Text style={styles.storeName}>{item.branch}</Text>
+            <Text style={styles.storeDetail}>כתובת: {item.address}</Text>
+            <Text style={styles.storeDetail}>מחיר כולל: ₪{item.totalPrice ?? item.price ?? 'N/A'}</Text>
+            <Text style={styles.storeDetail}>מוצרים שנמצאו: {item.itemsFound}</Text>
+            {item.distance !== null && item.distance !== undefined && (
+              <Text style={styles.storeDetail}>מרחק: {item.distance} ק"מ</Text>
+            )}
+          </View>
+          <Ionicons name="chevron-forward" size={24} color="#666" />
+        </TouchableOpacity>
+        
+        {/* Buy Button */}
+        {(tripType === 'group' && groupId) || tripType === 'personal' ? (
+          <TouchableOpacity style={styles.buyButton} onPress={() => handleBuy(item)}>
+            <Text style={styles.buyButtonText}>Buy from this Store</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
     );
   };
 
@@ -239,6 +262,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
       {/* Celebration animation */}
       {showCelebration && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.9)', justifyContent: 'center', alignItems: 'center', zIndex: 100 }}>
+          {console.log('Celebration animation should be visible:', showCelebration)}
           <LottieView
             source={require('../assets/animations/beforeShopping.json')}
             autoPlay
@@ -298,70 +322,44 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-  expandedCard: {
+  storeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  storeIconContainer: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     backgroundColor: '#f0f8ff',
-    borderColor: '#2196f3',
-    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  storeInfo: {
+    flex: 1,
   },
   storeName: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 4,
     color: '#222',
   },
   storeDetail: {
-    fontSize: 15,
+    fontSize: 14,
     color: '#444',
     marginBottom: 2,
   },
-  expandedSection: {
-    marginTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-    paddingTop: 8,
+  buyButton: {
+    backgroundColor: '#1976D2',
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
   },
-  sectionHeader: {
+  buyButtonText: {
+    color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
-    marginBottom: 4,
-    color: '#1976d2',
-  },
-  productCard: {
-    alignItems: 'center',
-    marginRight: 12,
-    backgroundColor: '#f9f9f9',
-    borderRadius: 8,
-    padding: 8,
-    width: 90,
-  },
-  notFoundCard: {
-    backgroundColor: '#f3f3f3',
-    borderColor: '#eee',
-    borderWidth: 1,
-  },
-  productImg: {
-    width: 48,
-    height: 48,
-    borderRadius: 6,
-    marginBottom: 4,
-    backgroundColor: '#eee',
-  },
-  productName: {
-    fontSize: 13,
-    textAlign: 'center',
-    color: '#333',
-  },
-  notFoundText: {
-    color: '#b71c1c',
-    fontSize: 14,
-    marginHorizontal: 8,
-    alignSelf: 'center',
-  },
-  foundText: {
-    color: '#388e3c',
-    fontSize: 14,
-    marginHorizontal: 8,
-    alignSelf: 'center',
   },
   error: { color: 'red', marginTop: 20, textAlign: 'center' },
   noResults: { color: '#888', marginTop: 30, textAlign: 'center', fontSize: 16 },

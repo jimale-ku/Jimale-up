@@ -18,6 +18,7 @@ import ProductListScreen from './screens/ProductListScreen';
 import { PersonalListProvider } from './services/PersonalListContext';
 import GroupSharedListScreen from './screens/GroupSharedListScreen';
 import TransitionScreenPersonal from './screens/TransitionScreenPersonal';
+import StoreDetailScreen from './screens/StoreDetailScreen';
 
 
 const Stack = createStackNavigator();
@@ -59,6 +60,15 @@ export default function App() {
             <Stack.Screen name="ProductList" component={ProductListScreen} />
             <Stack.Screen name="GroupSharedList" component={GroupSharedListScreen} />
             <Stack.Screen name="TransitionScreenPersonal" component={TransitionScreenPersonal} options={{ headerShown: false }} />
+            <Stack.Screen name="StoreDetail" component={StoreDetailScreen} options={{
+              headerTitle: 'Store Details',
+              headerTitleAlign: 'center',
+              headerTitleStyle: {
+                fontSize: 20,
+                fontWeight: 'bold',
+                color: '#2E7D32',
+              },
+            }} />
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>

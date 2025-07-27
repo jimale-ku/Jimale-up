@@ -10,6 +10,7 @@ import {
   Image,
   Dimensions,
   Modal,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
@@ -73,6 +74,25 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
     }
   }, [groupId, selectedCategory]); // re-fetch if groupId or tab changes
 
+  // Handle back button press
+  useEffect(() => {
+    const backAction = () => {
+      // If we're viewing a specific category (not 'all'), go back to main view
+      if (selectedCategory !== 'all') {
+        setSelectedCategory('all');
+        setSuggestions([]);
+        setOffset(0);
+        setHasMore(true);
+        fetchSmartSuggestions('all', 0, true);
+        return true; // Prevent default back action
+      }
+      return false; // Allow default back action (go to Group Detail)
+    };
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => backHandler.remove();
+  }, [selectedCategory]);
+
   const fetchSmartSuggestions = async (category = 'all', customOffset = 0, reset = false) => {
     try {
       setLoading(true);
@@ -135,7 +155,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       const favoriteIds = new Set();
       for (const item of suggestions) {
         if (item.productId) {
-          const response = await api.get(`/suggestions/favorites/check/${item.productId}`);
+          const response = await api.get(`/suggestions/favorites/check/${item.productId}?groupId=${groupId}`);
           if (response.data.isFavorited) {
             favoriteIds.add(item.productId);
           }
@@ -152,7 +172,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
     try {
       const isFavorited = favorites.has(productId);
       if (isFavorited) {
-        await api.post('/suggestions/favorites/remove', { productId });
+        await api.post('/suggestions/favorites/remove', { productId, groupId });
         setFavorites(prev => {
           const newSet = new Set(prev);
           newSet.delete(productId);
@@ -160,7 +180,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         });
         showToast('Removed from favorites');
       } else {
-        await api.post('/suggestions/favorites/add', { productId });
+        await api.post('/suggestions/favorites/add', { productId, groupId });
         setFavorites(prev => {
           const newSet = new Set(prev);
           newSet.add(productId);
@@ -290,23 +310,25 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         {item.type === 'recent' && (
           <>
             <Text style={styles.suggestionReason}>
-              You usually buy this every {item.avgInterval} days
+              Bought on {item.tripDate || 'Recent trip'}
             </Text>
-            <Text style={styles.suggestionReason}>
-              Last bought by {item.lastBuyer} on {item.lastPurchaseDate ? new Date(item.lastPurchaseDate).toLocaleDateString() : ''}
-            </Text>
-            {item.daysSinceLast > item.avgInterval && (
-              <Text style={[styles.suggestionReason, { color: '#FF4444' }]}>Overdue!</Text>
+            {item.quantity > 1 && (
+              <Text style={styles.suggestionReason}>
+                Quantity: {item.quantity}
+              </Text>
             )}
           </>
         )}
-        {/* Show frequent product details */}
+        {/* Show smart reason for frequent */}
         {item.type === 'frequent' && (
-          <Text style={styles.suggestionReason}>
-            Purchased {item.timesPurchased || item.frequency} times
-            {item.totalQuantity && ` • Total: ${item.totalQuantity} items`}
-            {item.lastPurchase && ` • Last: ${new Date(item.lastPurchase).toLocaleDateString()}`}
-          </Text>
+          <>
+            <Text style={styles.suggestionReason}>
+              Bought {item.frequency} time{item.frequency > 1 ? 's' : ''} in last 5 trips
+            </Text>
+            {item.favoriteCount > 0 && (
+              <Text style={[styles.suggestionReason, { color: '#FF6B6B', fontWeight: 'bold' }]}>★ Favorited by group</Text>
+            )}
+          </>
         )}
       </View>
       {/* ... existing action buttons ... */}
@@ -314,12 +336,12 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         {/* Heart Icon for Favorites */}
         <TouchableOpacity 
           style={styles.heartButton}
-          onPress={() => toggleFavorite(item.productId)}
+          onPress={() => toggleFavorite(item.productId || item._id)}
         >
           <Ionicons 
-            name={favorites.has(item.productId) ? "heart" : "heart-outline"} 
+            name={favorites.has(item.productId || item._id) ? "heart" : "heart-outline"} 
             size={20} 
-            color={favorites.has(item.productId) ? "#FF6B6B" : "#999"} 
+            color={favorites.has(item.productId || item._id) ? "#FF6B6B" : "#999"} 
           />
         </TouchableOpacity>
         
@@ -387,7 +409,9 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       showToast('Feature coming soon!');
       return;
     }
-    navigation.navigate('ProductListScreen', { category, groupId });
+    // Just set the selected category and fetch data - stay within this screen
+    setSelectedCategory(category);
+    fetchSmartSuggestions(category, 0, true);
   };
 
   const renderCategoryFilter = () => {
@@ -441,26 +465,46 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
 
   // Show empty state if no suggestions
   if (!loading && suggestions.length === 0) {
-    if (selectedCategory === 'favorite' || selectedCategory === 'frequent') {
+    if (selectedCategory === 'frequent') {
       return (
         <View style={styles.loadingContainer}>
           <Ionicons name="construct-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
-          <Text style={styles.loadingText}>Feature coming soon!</Text>
+          <Text style={styles.loadingText}>No frequent items yet!</Text>
           <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
-            This smart suggestion card will be available in a future update.
+            Try adding more items to your shopping list to see frequent ones here.
           </Text>
         </View>
       );
     }
-    // Default empty state for ALL/RECENT
+    if (selectedCategory === 'recent') {
+      return (
+        <View style={styles.loadingContainer}>
+          <Ionicons name="time-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
+          <Text style={styles.loadingText}>No recent trips yet!</Text>
+          <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
+            Complete your first shopping trip to see recent items here.
+          </Text>
+        </View>
+      );
+    }
+    if (selectedCategory === 'favorite') {
+      return (
+        <View style={styles.loadingContainer}>
+          <Ionicons name="heart-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
+          <Text style={styles.loadingText}>No favorites yet!</Text>
+          <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
+            Favorite items from the ALL card to see them here.
+          </Text>
+        </View>
+      );
+    }
+    // Default empty state for ALL
     return (
       <View style={styles.loadingContainer}>
         <Ionicons name="bulb-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
-        <Text style={styles.loadingText}>No smart suggestions yet!</Text>
+        <Text style={styles.loadingText}>No products to show!</Text>
         <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
-          {selectedCategory === 'all'
-            ? 'No products to show. Try again later.'
-            : 'Add products to your group and mark them as purchased to see smart recent suggestions here.'}
+          Try again later.
         </Text>
       </View>
     );
@@ -483,13 +527,39 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         ListEmptyComponent={
           !loading && (
             <View style={styles.loadingContainer}>
-              <Ionicons name="bulb-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
-              <Text style={styles.loadingText}>No smart suggestions yet!</Text>
-              <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
-                {selectedCategory === 'all'
-                  ? 'No products to show. Try again later.'
-                  : 'Add products to your group and mark them as purchased to see smart recent suggestions here.'}
-              </Text>
+              {selectedCategory === 'recent' ? (
+                <>
+                  <Ionicons name="time-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
+                  <Text style={styles.loadingText}>No recent trips yet!</Text>
+                  <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
+                    Complete your first shopping trip to see recent items here.
+                  </Text>
+                </>
+              ) : selectedCategory === 'favorite' ? (
+                <>
+                  <Ionicons name="heart-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
+                  <Text style={styles.loadingText}>No favorites yet!</Text>
+                  <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
+                    Favorite items from the ALL card to see them here.
+                  </Text>
+                </>
+              ) : selectedCategory === 'frequent' ? (
+                <>
+                  <Ionicons name="construct-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
+                  <Text style={styles.loadingText}>No frequent items yet!</Text>
+                  <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
+                    Try adding more items to your shopping list to see frequent ones here.
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="bulb-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
+                  <Text style={styles.loadingText}>No products to show!</Text>
+                  <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
+                    Try again later.
+                  </Text>
+                </>
+              )}
             </View>
           )
         }
@@ -533,26 +603,30 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     color: '#333',
-    marginBottom: 5,
+    marginBottom: 4,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#666',
+    letterSpacing: 0.5,
   },
   categoryFilterContainer: {
     paddingHorizontal: 15,
     paddingVertical: 15,
   },
   categoryCard: {
-    width: 120,
-    height: 100,
-    marginRight: 15,
-    borderRadius: 16,
+    width: (width - 60) / 2,
+    height: 120,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 4,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
   },
   categoryCardActive: {
     transform: [{ scale: 1.05 }],
@@ -749,46 +823,35 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   tabBarContainer: {
-    backgroundColor: '#f8f9fa',
-    paddingTop: 10,
-    paddingBottom: 6,
+    backgroundColor: '#fff',
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
   },
   tabBarList: {
-    paddingHorizontal: 10,
-    alignItems: 'center',
+    paddingHorizontal: 16,
   },
   tabCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 22,
+    backgroundColor: '#f8f9fa',
+    paddingHorizontal: 16,
     paddingVertical: 10,
-    paddingHorizontal: 18,
-    marginHorizontal: 6,
-    marginBottom: 2,
-    borderWidth: 1.5,
+    borderRadius: 20,
+    marginRight: 12,
+    borderWidth: 1,
     borderColor: '#e0e0e0',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    minWidth: 90,
   },
   tabCardActive: {
     backgroundColor: '#2E7D32',
     borderColor: '#2E7D32',
-    elevation: 5,
-    shadowOpacity: 0.15,
   },
   tabCardText: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: '#2E7D32',
-    letterSpacing: 0.5,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
   },
+
 });
 
 export default SmartSuggestionsScreen; 

@@ -343,6 +343,7 @@ exports.addItemToListById = async (req, res) => {
           features.categoryPopularity || 0
         ];
         await TrainingExample.create({
+          userId: req.userId,
           productId: productId,
           features: featuresArray,
           label: 1 // 1 = accepted/added
