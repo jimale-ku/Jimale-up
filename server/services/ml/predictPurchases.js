@@ -52,36 +52,54 @@ async function trainModel() {
       return await initializeDefaultWeights();
     }
 
+    // Filter out invalid examples
+    const validExamples = examples.filter(e => e && e.features && typeof e.label === 'number');
+    
+    if (validExamples.length === 0) {
+      console.log('No valid training examples found. Using default weights.');
+      return await initializeDefaultWeights();
+    }
+
+    console.log(`Found ${validExamples.length} valid training examples out of ${examples.length} total`);
+
     // --- Train/Test Split for Accuracy ---
     // Shuffle examples
-    const shuffled = examples.sort(() => Math.random() - 0.5);
+    const shuffled = validExamples.sort(() => Math.random() - 0.5);
     const splitIdx = Math.floor(shuffled.length * 0.8); // 80% train, 20% test
     const trainSet = shuffled.slice(0, splitIdx);
     const testSet = shuffled.slice(splitIdx);
 
-    const X_train = trainSet.map(e => [
-      e.features.bias || 1, // Default bias to 1 if not present
-      e.features.isFavorite || 0,
-      e.features.purchasedBefore || 0,
-      e.features.timesPurchased || 0,
-      e.features.recentlyPurchased || 0,
-      e.features.storeCount || 0,
-      e.features.timesWasRejectedByUser || 0,
-      e.features.timesWasRejectedByCart || 0
-    ]);
-    const y_train = trainSet.map(e => e.label);
+    const X_train = trainSet.map(e => {
+      // Ensure features object exists and has all required properties
+      const features = e.features || {};
+      return [
+        features.bias || 1, // Default bias to 1 if not present
+        features.isFavorite || 0,
+        features.purchasedBefore || 0,
+        features.timesPurchased || 0,
+        features.recentlyPurchased || 0,
+        features.storeCount || 0,
+        features.timesWasRejectedByUser || 0,
+        features.timesWasRejectedByCart || 0
+      ];
+    });
+    const y_train = trainSet.map(e => e.label || 0);
 
-    const X_test = testSet.map(e => [
-      e.features.bias || 1, // Default bias to 1 if not present
-      e.features.isFavorite || 0,
-      e.features.purchasedBefore || 0,
-      e.features.timesPurchased || 0,
-      e.features.recentlyPurchased || 0,
-      e.features.storeCount || 0,
-      e.features.timesWasRejectedByUser || 0,
-      e.features.timesWasRejectedByCart || 0
-    ]);
-    const y_test = testSet.map(e => e.label);
+    const X_test = testSet.map(e => {
+      // Ensure features object exists and has all required properties
+      const features = e.features || {};
+      return [
+        features.bias || 1, // Default bias to 1 if not present
+        features.isFavorite || 0,
+        features.purchasedBefore || 0,
+        features.timesPurchased || 0,
+        features.recentlyPurchased || 0,
+        features.storeCount || 0,
+        features.timesWasRejectedByUser || 0,
+        features.timesWasRejectedByCart || 0
+      ];
+    });
+    const y_test = testSet.map(e => e.label || 0);
 
     // Train the model on the training set
     const trainedWeights = trainLogisticRegression(X_train, y_train);
