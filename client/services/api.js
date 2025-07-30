@@ -3,7 +3,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import EventEmitter from 'eventemitter3';
 
 // API configuration - change IP address to match your computer
-const api = axios.create({ baseURL: 'http://192.168.100.34:5000/api' });
+// You can set this via environment variable or change directly here
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://192.168.100.34:5000/api';
+const api = axios.create({ baseURL: API_BASE_URL });
 
 api.interceptors.request.use(async (config) => {
     const token = await AsyncStorage.getItem('token');

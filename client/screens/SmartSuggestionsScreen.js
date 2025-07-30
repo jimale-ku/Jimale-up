@@ -11,6 +11,7 @@ import {
   Dimensions,
   Modal,
   BackHandler,
+  TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
@@ -58,6 +59,10 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
   const [favoriteItems, setFavoriteItems] = useState([]);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
+  const [addedItemsCount, setAddedItemsCount] = useState(0);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filteredSuggestions, setFilteredSuggestions] = useState([]);
+  const [loadedProductIds, setLoadedProductIds] = useState(new Set());
 
   const groupId = route?.params?.groupId || null;
 
@@ -66,13 +71,30 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
   useEffect(() => {
     if (selectedCategory === 'all') {
       setSuggestions([]);
+      setFilteredSuggestions([]);
       setOffset(0);
       setHasMore(true);
+      setLoadedProductIds(new Set());
+      setSearchTerm('');
       fetchSmartSuggestions('all', 0, true);
     } else {
       fetchSmartSuggestions(selectedCategory);
     }
   }, [groupId, selectedCategory]); // re-fetch if groupId or tab changes
+
+  // Handle search filtering
+  useEffect(() => {
+    if (selectedCategory === 'all') {
+      if (searchTerm.trim()) {
+        const filtered = suggestions.filter(item =>
+          item.name.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+        setFilteredSuggestions(filtered);
+      } else {
+        setFilteredSuggestions(suggestions);
+      }
+    }
+  }, [searchTerm, suggestions, selectedCategory]);
 
   // Handle back button press
   useEffect(() => {
@@ -101,14 +123,21 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         const response = await api.get(`/products?limit=50&offset=${customOffset}`);
         const newProducts = response.data || [];
         
+        // Filter out already loaded products to prevent duplicates
+        const uniqueProducts = newProducts.filter(product => 
+          !loadedProductIds.has(product._id || product.productId)
+        );
+        
         if (reset) {
-          setSuggestions(newProducts);
+          setSuggestions(uniqueProducts);
+          setLoadedProductIds(new Set(uniqueProducts.map(p => p._id || p.productId)));
           setOffset(50);
-          setHasMore(newProducts.length === 50);
+          setHasMore(uniqueProducts.length === 50);
         } else {
-          setSuggestions(prev => [...prev, ...newProducts]);
+          setSuggestions(prev => [...prev, ...uniqueProducts]);
+          setLoadedProductIds(prev => new Set([...prev, ...uniqueProducts.map(p => p._id || p.productId)]));
           setOffset(prev => prev + 50);
-          setHasMore(newProducts.length === 50);
+          setHasMore(uniqueProducts.length === 50);
         }
         
         setLoading(false);
@@ -368,7 +397,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       return;
     }
     try {
-      console.log('Adding to group shared list:', item);
+      // console.log('Adding to group shared list:', item);
       await api.post(`/groups/${groupId}/list/items`, {
         name: item.name,
         icon: item.img,
@@ -376,7 +405,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         barcode: item.barcode || '',
       });
       showToast(`${item.name} added to shared list!`);
-      navigation.navigate('GroupSharedList', { groupId });
+      setAddedItemsCount(prev => prev + 1);
     } catch (error) {
       console.error('Error adding to shared list:', error);
       showToast('Failed to add item to shared list');
@@ -412,6 +441,35 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
     // Just set the selected category and fetch data - stay within this screen
     setSelectedCategory(category);
     fetchSmartSuggestions(category, 0, true);
+  };
+
+  const renderSearchBar = () => {
+    if (selectedCategory !== 'all') return null;
+    
+    return (
+      <View style={styles.searchContainer}>
+        <View style={styles.searchInputContainer}>
+          <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search products..."
+            placeholderTextColor="#999"
+            value={searchTerm}
+            onChangeText={setSearchTerm}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {searchTerm.length > 0 && (
+            <TouchableOpacity 
+              style={styles.clearButton}
+              onPress={() => setSearchTerm('')}
+            >
+              <Ionicons name="close-circle" size={20} color="#666" />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    );
   };
 
   const renderCategoryFilter = () => {
@@ -513,15 +571,32 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Smart Suggestions</Text>
-        <Text style={styles.subtitle}>Personalized recommendations just for you</Text>
+        <View style={styles.headerContent}>
+          <View style={styles.headerText}>
+            <Text style={styles.title}>Smart Suggestions</Text>
+            <Text style={styles.subtitle}>Personalized recommendations just for you</Text>
+          </View>
+          <TouchableOpacity 
+            style={styles.cartIconContainer}
+            onPress={() => navigation.navigate('GroupSharedList', { groupId })}
+          >
+            <Ionicons name="list" size={24} color="#2E7D32" />
+            {addedItemsCount > 0 && (
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>{addedItemsCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
       {/* Render the horizontal tabbed category filter */}
       {renderCategoryFilter()}
+      {/* Render search bar for ALL category */}
+      {renderSearchBar()}
       {/* Product suggestions list below the tabs */}
       <FlatList
-        data={suggestions}
-        keyExtractor={(item, index) => `${item.productId}_${index}`}
+        data={selectedCategory === 'all' ? filteredSuggestions : suggestions}
+        keyExtractor={(item, index) => `${item._id || item.productId}_${index}`}
         renderItem={renderSuggestion}
         contentContainerStyle={{ padding: 16, paddingBottom: 60 }}
         ListEmptyComponent={
@@ -551,6 +626,14 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
                     Try adding more items to your shopping list to see frequent ones here.
                   </Text>
                 </>
+              ) : selectedCategory === 'all' && searchTerm.trim() ? (
+                <>
+                  <Ionicons name="search-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
+                  <Text style={styles.loadingText}>No products found</Text>
+                  <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
+                    Try a different search term.
+                  </Text>
+                </>
               ) : (
                 <>
                   <Ionicons name="bulb-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
@@ -563,10 +646,20 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
             </View>
           )
         }
-        refreshing={loading}
-        onRefresh={() => fetchSmartSuggestions(selectedCategory, 0, true)}
+        refreshing={loading && suggestions.length === 0}
+        onRefresh={() => {
+          setLoadedProductIds(new Set());
+          fetchSmartSuggestions(selectedCategory, 0, true);
+        }}
         onEndReached={handleEndReached}
         onEndReachedThreshold={0.5}
+        ListFooterComponent={loading && suggestions.length > 0 ? (
+          <ActivityIndicator size="small" color="#2E7D32" style={{ padding: 20 }} />
+        ) : null}
+        maintainVisibleContentPosition={{
+          minIndexForVisible: 0,
+          autoscrollToTopThreshold: 10,
+        }}
       />
       {toast.visible && (
         <View style={styles.toast}>
@@ -598,6 +691,67 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
+  },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  headerText: {
+    flex: 1,
+  },
+  cartIconContainer: {
+    position: 'relative',
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#f8f9fa',
+  },
+  cartBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#FF6B6B',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  cartBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  searchContainer: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    borderRadius: 25,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  searchIcon: {
+    marginRight: 12,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: '#333',
+    padding: 0,
+  },
+  clearButton: {
+    marginLeft: 8,
+    padding: 4,
   },
   title: {
     fontSize: 24,

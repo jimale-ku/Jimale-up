@@ -60,26 +60,26 @@ async function trainModel() {
     const testSet = shuffled.slice(splitIdx);
 
     const X_train = trainSet.map(e => [
-      e.features.bias,
-      e.features.isFavorite,
-      e.features.purchasedBefore,
-      e.features.timesPurchased,
-      e.features.recentlyPurchased,
-      e.features.storeCount,
-      e.features.timesWasRejectedByUser,
-      e.features.timesWasRejectedByCart
+      e.features.bias || 1, // Default bias to 1 if not present
+      e.features.isFavorite || 0,
+      e.features.purchasedBefore || 0,
+      e.features.timesPurchased || 0,
+      e.features.recentlyPurchased || 0,
+      e.features.storeCount || 0,
+      e.features.timesWasRejectedByUser || 0,
+      e.features.timesWasRejectedByCart || 0
     ]);
     const y_train = trainSet.map(e => e.label);
 
     const X_test = testSet.map(e => [
-      e.features.bias,
-      e.features.isFavorite,
-      e.features.purchasedBefore,
-      e.features.timesPurchased,
-      e.features.recentlyPurchased,
-      e.features.storeCount,
-      e.features.timesWasRejectedByUser,
-      e.features.timesWasRejectedByCart
+      e.features.bias || 1, // Default bias to 1 if not present
+      e.features.isFavorite || 0,
+      e.features.purchasedBefore || 0,
+      e.features.timesPurchased || 0,
+      e.features.recentlyPurchased || 0,
+      e.features.storeCount || 0,
+      e.features.timesWasRejectedByUser || 0,
+      e.features.timesWasRejectedByCart || 0
     ]);
     const y_test = testSet.map(e => e.label);
 

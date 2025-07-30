@@ -48,21 +48,9 @@ export default function GroupSharedListScreen({ route, navigation }) {
   };
 
   const handleCompare = () => {
-    console.log(`[DEBUG] === GROUP COMPARE TRIGGERED ===`);
-    console.log(`[DEBUG] Group ID: ${groupId}`);
-    console.log(`[DEBUG] Summary currentList length: ${summary.currentList.length}`);
-    console.log(`[DEBUG] All items in currentList:`, summary.currentList.map(item => `${item.name} (${item.barcode})`));
-    
-    // DEBUG: Check what fields the items actually have
-    console.log(`[DEBUG] === CHECKING ITEM FIELDS ===`);
-    summary.currentList.forEach((item, index) => {
-      console.log(`[DEBUG] Item ${index + 1}: ${item.name}`);
-      console.log(`[DEBUG]   - Has img field: ${!!item.img}`);
-      console.log(`[DEBUG]   - Has icon field: ${!!item.icon}`);
-      console.log(`[DEBUG]   - Has image field: ${!!item.image}`);
-      console.log(`[DEBUG]   - img length: ${item.img ? item.img.length : 0}`);
-      console.log(`[DEBUG]   - icon length: ${item.icon ? item.icon.length : 0}`);
-    });
+    // Clean console logging - only essential info
+    console.log(`🛒 Compare triggered for group: ${groupId}`);
+    console.log(`📦 Items in list: ${summary.currentList.length}`);
     
     const products = summary.currentList
       .filter(item => item.barcode && /^[0-9A-Za-z]+$/.test(item.barcode))
@@ -73,8 +61,7 @@ export default function GroupSharedListScreen({ route, navigation }) {
         image: item.img || item.icon // Add the image field
       }));
     
-    console.log(`[DEBUG] Filtered products to send to store system: ${products.length}`);
-    console.log(`[DEBUG] Products being sent:`, products.map(p => `${p.name} (${p.barcode})`));
+    console.log(`✅ Sending ${products.length} products to store comparison`);
     
     navigation.navigate('WhereToBuy', {
       products,

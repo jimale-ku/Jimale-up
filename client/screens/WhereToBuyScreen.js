@@ -101,6 +101,12 @@ const WhereToBuyScreen = ({ route, navigation }) => {
       const data = await response.json();
       console.log('Store data:', data);
       console.log('Products with images:', products.map(p => ({ barcode: p.barcode, name: p.name, hasImage: !!p.image })));
+      
+      // Debug: Check if scores are present
+      if (Array.isArray(data)) {
+        console.log('Scores in response:', data.map(store => ({ branch: store.branch, score: store.score })));
+      }
+      
       setStores(Array.isArray(data) ? data.slice(0, 5) : (data.stores?.slice(0, 5) || []));
     } catch (e) {
       setError('Could not fetch store data.');
@@ -112,9 +118,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
   const handleBuy = async (selectedStore) => {
     console.log('Buy button pressed', { tripType, selectedStore });
     if (tripType === 'group' && groupId) {
-      console.log('Entering group trip buy logic');
       try {
-        console.log('About to call API for group complete-trip');
         await api.post(`/groups/${groupId}/list/complete-trip`, {
           store: {
             branch: selectedStore.branch,
@@ -122,7 +126,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
             totalPrice: selectedStore.totalPrice ?? selectedStore.price ?? null,
           }
         });
-        console.log('API call successful, setting showCelebration to true');
+        console.log('Setting showCelebration to true');
         setShowCelebration(true);
         setTimeout(() => {
           console.log('Timeout done, hiding celebration and navigating to GroupSharedList');
@@ -130,11 +134,10 @@ const WhereToBuyScreen = ({ route, navigation }) => {
           navigation.navigate('GroupSharedList', { groupId });
         }, 3000);
       } catch (err) {
-        console.log('Error in group trip buy logic:', err);
         Alert.alert('Error', 'Failed to complete group trip');
       }
     } else if (tripType === 'personal') {
-      console.log('Entering personal trip buy logic');
+      console.log('Personal trip buy logic triggered');
       try {
         completeTrip({
           branch: selectedStore.branch || selectedStore.storeName,
@@ -197,6 +200,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
             <Text style={styles.storeDetail}>כתובת: {item.address}</Text>
             <Text style={styles.storeDetail}>מחיר כולל: ₪{item.totalPrice ?? item.price ?? 'N/A'}</Text>
             <Text style={styles.storeDetail}>מוצרים שנמצאו: {item.itemsFound}</Text>
+            <Text style={styles.storeScore}>Score: {item.score || 'N/A'}</Text>
             {item.distance !== null && item.distance !== undefined && (
               <Text style={styles.storeDetail}>מרחק: {item.distance} ק"מ</Text>
             )}
@@ -348,6 +352,12 @@ const styles = StyleSheet.create({
   storeDetail: {
     fontSize: 14,
     color: '#444',
+    marginBottom: 2,
+  },
+  storeScore: {
+    fontSize: 14,
+    color: '#1976D2',
+    fontWeight: 'bold',
     marginBottom: 2,
   },
   buyButton: {

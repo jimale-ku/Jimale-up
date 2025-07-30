@@ -24,17 +24,23 @@ const StoreDetailScreen = ({ route, navigation }) => {
     return 'storefront'; // default icon
   };
 
-  // Separate found and not found items
-  const foundBarcodes = store.foundBarcodes || [];
-  const foundProducts = products.filter(p => foundBarcodes.includes(p.barcode));
-  const notFoundProducts = products.filter(p => !foundBarcodes.includes(p.barcode));
-
+  // Separate real and estimated prices
+  const realPrices = store.realPrices || {};
+  const estimatedPrices = store.estimatedPrices || {};
+  const itemPrices = store.itemPrices || {};
+  
+  // All products should now have prices (real or estimated)
+  const allProducts = products;
+  
   // Calculate totals using individual item prices from API
-  const foundTotal = foundProducts.reduce((sum, prod) => {
-    // Use individual item price from store data if available, otherwise fallback to product price
-    const itemPrice = store.itemPrices?.[prod.barcode] || prod.price || 0;
+  const totalPrice = allProducts.reduce((sum, prod) => {
+    const itemPrice = itemPrices[prod.barcode] || 0;
     return sum + itemPrice;
   }, 0);
+  
+  // Count real vs estimated prices
+  const realPriceCount = Object.keys(realPrices).length;
+  const estimatedPriceCount = Object.keys(estimatedPrices).length;
 
   const handleBuy = async () => {
     console.log('Buy button pressed', { tripType, store });
@@ -72,29 +78,35 @@ const StoreDetailScreen = ({ route, navigation }) => {
     }
   };
 
-  const renderItemCard = (product, isFound = true) => {
+  const renderItemCard = (product) => {
     // Get the actual product image and details from store data if available
     const productDetails = store.productDetails?.[product.barcode];
     const displayName = productDetails?.name || product.name;
-    const displayImage = productDetails?.img || product.image || product.img || product.icon; // Fixed to use correct field
-    const displayPrice = isFound ? (store.itemPrices?.[product.barcode] || product.price || 'N/A') : (product.price || 'N/A');
+    const displayImage = productDetails?.img || product.image || product.img || product.icon;
+    const displayPrice = itemPrices[product.barcode] || 0;
+    const isEstimated = estimatedPrices[product.barcode] || productDetails?.isEstimated;
     
     return (
-      <View key={product.barcode} style={[styles.itemCard, !isFound && styles.notFoundItemCard]}>
+      <View key={product.barcode} style={[styles.itemCard, isEstimated && styles.estimatedItemCard]}>
         <Image 
           source={displayImage ? { uri: displayImage } : require('../assets/favicon.png')} 
-          style={[styles.itemImage, !isFound && styles.notFoundImage]} 
+          style={[styles.itemImage, isEstimated && styles.estimatedImage]} 
         />
         <View style={styles.itemInfo}>
-          <Text style={[styles.itemName, !isFound && styles.notFoundText]} numberOfLines={2}>
+          <Text style={[styles.itemName, isEstimated && styles.estimatedText]} numberOfLines={2}>
             {displayName}
           </Text>
-          <Text style={[
-            styles.itemPrice, 
-            !isFound && { color: '#e65100', fontWeight: 'bold' } // Orange and bold for not found items
-          ]}>
-            ₪{displayPrice}
-          </Text>
+          <View style={styles.priceContainer}>
+            <Text style={[
+              styles.itemPrice, 
+              isEstimated && { color: '#ff9800', fontWeight: 'bold' } // Orange for estimated prices
+            ]}>
+              ₪{displayPrice}
+            </Text>
+            {isEstimated && (
+              <Text style={styles.estimatedLabel}>מחיר משוער</Text>
+            )}
+          </View>
         </View>
       </View>
     );
@@ -123,34 +135,28 @@ const StoreDetailScreen = ({ route, navigation }) => {
         </View>
       </View>
 
-      {/* Items Found Card */}
+      {/* All Products Card */}
       <View style={styles.itemsCard}>
-        <Text style={styles.cardTitle}>מוצרים שנמצאו בחנות</Text>
-        <Text style={styles.itemsCount}>{foundProducts.length} מוצרים</Text>
-        {foundProducts.length > 0 ? (
+        <Text style={styles.cardTitle}>כל המוצרים</Text>
+        <Text style={styles.itemsCount}>
+          {allProducts.length} מוצרים ({realPriceCount} מחירים אמיתיים, {estimatedPriceCount} מחירים משוערים)
+        </Text>
+        {allProducts.length > 0 ? (
           <>
             <ScrollView style={styles.itemsList}>
-              {foundProducts.map(product => renderItemCard(product, true))}
+              {allProducts.map(product => renderItemCard(product))}
             </ScrollView>
             <View style={styles.totalSection}>
-              <Text style={styles.totalText}>סה"כ: ₪{foundTotal.toFixed(2)}</Text>
+              <Text style={styles.totalText}>סה"כ: ₪{totalPrice.toFixed(2)}</Text>
+              {estimatedPriceCount > 0 && (
+                <Text style={styles.estimatedTotalText}>
+                  כולל ₪{Object.values(estimatedPrices).reduce((sum, price) => sum + price, 0).toFixed(2)} מחירים משוערים
+                </Text>
+              )}
             </View>
           </>
         ) : (
           <Text style={styles.noItemsText}>לא נמצאו מוצרים</Text>
-        )}
-      </View>
-
-      {/* Items Not Found Card */}
-      <View style={styles.itemsCard}>
-        <Text style={styles.cardTitle}>מוצרים שלא נמצאו</Text>
-        <Text style={styles.itemsCount}>{notFoundProducts.length} מוצרים</Text>
-        {notFoundProducts.length > 0 ? (
-          <ScrollView style={styles.itemsList}>
-            {notFoundProducts.map(product => renderItemCard(product, false))}
-          </ScrollView>
-        ) : (
-          <Text style={styles.allFoundText}>כל המוצרים נמצאו! 🎉</Text>
         )}
       </View>
 
@@ -249,8 +255,8 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 8,
   },
-  notFoundItemCard: {
-    backgroundColor: '#fff3e0', // Warm orange background instead of grey
+  estimatedItemCard: {
+    backgroundColor: '#fff8e1', // Light orange background for estimated items
     borderWidth: 1,
     borderColor: '#ffb74d', // Orange border
   },
@@ -260,8 +266,8 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     marginRight: 12,
   },
-  notFoundImage: {
-    // Remove opacity to keep images vibrant
+  estimatedImage: {
+    opacity: 0.8, // Slightly dimmed for estimated items
   },
   itemInfo: {
     flex: 1,
@@ -276,13 +282,22 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 8,
   },
+  priceContainer: {
+    alignItems: 'flex-end',
+  },
   itemPrice: {
     fontSize: 14,
     fontWeight: '600',
     color: '#1976D2',
   },
-  notFoundText: {
-    color: '#e65100', // Orange text instead of grey
+  estimatedText: {
+    color: '#ff9800', // Orange text for estimated items
+  },
+  estimatedLabel: {
+    fontSize: 10,
+    color: '#ff9800',
+    fontStyle: 'italic',
+    marginTop: 2,
   },
   totalSection: {
     borderTopWidth: 1,
@@ -295,6 +310,13 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#1976D2',
     textAlign: 'right',
+  },
+  estimatedTotalText: {
+    fontSize: 12,
+    color: '#ff9800',
+    textAlign: 'right',
+    fontStyle: 'italic',
+    marginTop: 4,
   },
   noItemsText: {
     fontSize: 14,

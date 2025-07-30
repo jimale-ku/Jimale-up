@@ -19,6 +19,7 @@ import { PersonalListProvider } from './services/PersonalListContext';
 import GroupSharedListScreen from './screens/GroupSharedListScreen';
 import TransitionScreenPersonal from './screens/TransitionScreenPersonal';
 import StoreDetailScreen from './screens/StoreDetailScreen';
+import TransitionScreenGroup from './screens/TransitionScreenGroup';
 
 
 const Stack = createStackNavigator();
@@ -60,6 +61,7 @@ export default function App() {
             <Stack.Screen name="ProductList" component={ProductListScreen} />
             <Stack.Screen name="GroupSharedList" component={GroupSharedListScreen} />
             <Stack.Screen name="TransitionScreenPersonal" component={TransitionScreenPersonal} options={{ headerShown: false }} />
+            <Stack.Screen name="TransitionScreenGroup" component={TransitionScreenGroup} options={{ headerShown: false }} />
             <Stack.Screen name="StoreDetail" component={StoreDetailScreen} options={{
               headerTitle: 'Store Details',
               headerTitleAlign: 'center',

@@ -108,9 +108,14 @@ router.get('/', async (req, res) => {
             }))
             .filter(p => p.img && (p.img.startsWith('http') || p.img.startsWith('data:image/')) && p.img !== PLACEHOLDER_IMAGE);
         products = products.slice(start, start + maxProducts);
+        
+        // Log only essential info, not the entire product data
+        console.log(`📦 Products API: ${products.length} products returned (${req.query.limit || 20} limit, ${req.query.offset || 0} offset)`);
+        
         res.json(products);
     } catch (err) {
         // If there's an error reading/parsing the file, return a 500 error
+        console.error('❌ Products API Error:', err.message);
         res.status(500).json({ error: 'Failed to load products for testing', details: err.message });
     }
 });

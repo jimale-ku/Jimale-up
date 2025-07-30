@@ -8,7 +8,7 @@ const { Server } = require('socket.io');
 require('dotenv').config();
 
 
-console.log('GOOGLE_MAPS_API_KEY:', process.env.GOOGLE_MAPS_API_KEY); // Debug: check if key is loaded
+// console.log('GOOGLE_MAPS_API_KEY:', process.env.GOOGLE_MAPS_API_KEY); // Debug: check if key is loaded
 
 const app = express();
 const server = http.createServer(app); // HTTP server for socket support
@@ -21,9 +21,12 @@ const io = new Server(server, {
 // Make socket.io available to controllers
 app.set('io', io);
 
-// Request logging middleware
+// Request logging middleware - only log important requests
 app.use((req, res, next) => {
-  console.log(`${req.method} ${req.url}`);
+  // Only log non-asset requests and avoid logging product data
+  if (!req.url.includes('/api/products') || req.method !== 'GET') {
+    console.log(`${req.method} ${req.url}`);
+  }
   next();
 });
 
@@ -56,10 +59,10 @@ app.get('/api/groups/my', (req, res) => {
 });
 
 // TEMPORARY: Debug route to check req.body
-app.post('/test-body', (req, res) => {
-  console.log('BODY:', req.body);
-  res.json({ body: req.body });
-});
+// app.post('/test-body', (req, res) => {
+//   console.log('BODY:', req.body);
+//   res.json({ body: req.body });
+// });
 
 // Connect to MongoDB
 const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://ibrahimkhalif22031:Allah22031@ibrahim.cfpeif6.mongodb.net/smartbuy?retryWrites=true&w=majority';
@@ -83,49 +86,51 @@ const initializeMLModel = async () => {
     const oneDay = 24 * 60 * 60 * 1000;
 
     if (latest && now - new Date(latest.updatedAt).getTime() < oneDay) {
-      console.log('ML model is up to date');
+      console.log('🤖 ML model is up to date');
       return;
     }
 
+    console.log('🤖 Initializing ML model...');
     console.time('ML model training duration');
     const { trainModel } = require('./services/ml/predictPurchases');
     await trainModel();
     console.timeEnd('ML model training duration');
 
     if (latest) {
-      console.log('ML model retraining complete');
+      console.log('✅ ML model retraining complete');
     } else {
-      console.log('ML model initial training complete');
+      console.log('✅ ML model initial training complete');
     }
   } catch (err) {
-    console.error('Error initializing ML model:', err);
+    console.error('❌ Error initializing ML model:', err.message);
+    console.log('⚠️  ML model will use default weights');
   }
 };
 
 // Socket.IO event handlers
 io.on('connection', (socket) => {
-  console.log('Socket connected:', socket.id);
+  // console.log('Socket connected:', socket.id);
 
   // Handle group joining
   socket.on('joinGroup', (groupId) => {
     socket.join(groupId);
-    console.log(`Socket ${socket.id} joined group: ${groupId}`);
+    // console.log(`Socket ${socket.id} joined group: ${groupId}`);
   });
 
   // Handle list joining
   socket.on('joinList', (listId) => {
     socket.join(listId);
-    console.log(`Socket ${socket.id} joined list: ${listId}`);
+    // console.log(`Socket ${socket.id} joined list: ${listId}`);
   });
 
   // Handle list updates
   socket.on('listUpdate', ({ listId }) => {
-    console.log(`Broadcasting update to list ${listId}`);
+    // console.log(`Broadcasting update to list ${listId}`);
     io.to(listId).emit('listUpdate', { listId });
   });
 
   socket.on('disconnect', () => {
-    console.log('Socket disconnected:', socket.id);
+    // console.log('Socket disconnected:', socket.id);
   });
 });
 
@@ -138,7 +143,18 @@ app.get('/', (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  // Get custom branding from environment variables or use defaults
+  const APP_NAME = process.env.APP_NAME || 'SmartBuy';
+  const DEVELOPER_NAME = process.env.DEVELOPER_NAME || 'Your Name';
+  const NETWORK_IP = process.env.NETWORK_IP || '192.168.100.34';
+  
+  console.log(`🚀 ${APP_NAME} Server Started`);
+  console.log(`👨‍💻 Developer: ${DEVELOPER_NAME}`);
+  console.log(`📍 Port: ${PORT}`);
+  console.log(`🔗 Local: http://localhost:${PORT}`);
+  console.log(`🌐 Network: http://${NETWORK_IP}:${PORT}`);
+  console.log('📱 QR Code will appear below for mobile testing');
+  console.log('─'.repeat(50));
   
   // Initialize ML model after server starts
   setTimeout(initializeMLModel, 2000); // Wait 2 seconds for MongoDB connection

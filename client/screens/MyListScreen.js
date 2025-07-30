@@ -19,7 +19,8 @@ export default function MyListScreen({ navigation }) {
     const products = items.map(item => ({
       barcode: item.barcode || '',
       name: item.name,
-      quantity: item.quantity || 1
+      quantity: item.quantity || 1,
+      image: item.img || item.icon // Add the image field like group trip
     }));
     navigation.navigate('WhereToBuy', {
       source: 'personal',
