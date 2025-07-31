@@ -18,11 +18,15 @@ import api from '../services/api';
 
 const { width } = Dimensions.get('window');
 
-const CATEGORY_CARDS = [
-  { key: 'all', name: 'ALL', icon: 'grid', color: '#4ECDC4' },
+const MAIN_TABS = [
+  { key: 'all', name: 'All', icon: 'grid' },
+  { key: 'smart', name: 'Smart Suggestions', icon: 'bulb' },
+];
+
+const SMART_SUB_TABS = [
   { key: 'recent', name: 'RECENT', icon: 'time', color: '#45B7D1' },
-  { key: 'favorite', name: 'FAVORITE', icon: 'heart', color: '#FFEAA7' },
   { key: 'frequent', name: 'FREQUENT', icon: 'repeat', color: '#FF6B6B' },
+  { key: 'favorite', name: 'FAVORITE', icon: 'heart', color: '#FFEAA7' },
 ];
 
 // Helper to fetch and cache product.json
@@ -53,7 +57,8 @@ const useProductJson = () => {
 const SmartSuggestionsScreen = ({ navigation, route }) => {
   const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [selectedMainTab, setSelectedMainTab] = useState('all');
+  const [selectedSmartTab, setSelectedSmartTab] = useState('recent');
   const [favorites, setFavorites] = useState(new Set());
   const [showFavoritesModal, setShowFavoritesModal] = useState(false);
   const [favoriteItems, setFavoriteItems] = useState([]);
@@ -63,13 +68,41 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredSuggestions, setFilteredSuggestions] = useState([]);
   const [loadedProductIds, setLoadedProductIds] = useState(new Set());
+  // Add loading states for individual items
+  const [addingItems, setAddingItems] = useState(new Set());
+  const [addedItems, setAddedItems] = useState(new Set());
 
   const groupId = route?.params?.groupId || null;
 
   const { loadProducts: loadProductJson, loading: loadingProducts } = useProductJson();
 
+  // Determine the current category based on selected tabs
+  const getCurrentCategory = () => {
+    if (selectedMainTab === 'all') return 'all';
+    if (selectedMainTab === 'smart') return selectedSmartTab; // recent, frequent, or favorite
+    return 'all'; // fallback
+  };
+
+  // Fetch initial count of items in group's shared list
+  const fetchInitialCount = async () => {
+    if (!groupId) {
+      setAddedItemsCount(0);
+      return;
+    }
+    try {
+      const response = await api.get(`/groups/${groupId}/list/items`);
+      const items = response.data || [];
+      setAddedItemsCount(items.length);
+    } catch (error) {
+      // Silently handle errors - just set count to 0
+      setAddedItemsCount(0);
+    }
+  };
+
   useEffect(() => {
-    if (selectedCategory === 'all') {
+    const currentCategory = getCurrentCategory();
+    
+    if (currentCategory === 'all') {
       setSuggestions([]);
       setFilteredSuggestions([]);
       setOffset(0);
@@ -77,67 +110,116 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       setLoadedProductIds(new Set());
       setSearchTerm('');
       fetchSmartSuggestions('all', 0, true);
-    } else {
-      fetchSmartSuggestions(selectedCategory);
+    } else if (selectedMainTab === 'smart') {
+      // Don't auto-fetch for smart tab, let user click sub-tabs
+      setSuggestions([]);
+      setFilteredSuggestions([]);
     }
-  }, [groupId, selectedCategory]); // re-fetch if groupId or tab changes
+  }, [groupId, selectedMainTab]); // Remove selectedSmartTab from dependencies
+
+  // Fetch initial count when component mounts or groupId changes
+  useEffect(() => {
+    try {
+      fetchInitialCount();
+    } catch (error) {
+      console.error('Error in fetchInitialCount useEffect:', error);
+      setAddedItemsCount(0);
+    }
+  }, [groupId]);
 
   // Handle search filtering
   useEffect(() => {
-    if (selectedCategory === 'all') {
+    if (selectedMainTab === 'all') {
       if (searchTerm.trim()) {
-        const filtered = suggestions.filter(item =>
-          item.name.toLowerCase().includes(searchTerm.toLowerCase())
-        );
-        setFilteredSuggestions(filtered);
+        // Search the database directly instead of filtering loaded items
+        searchProducts(searchTerm);
       } else {
-        setFilteredSuggestions(suggestions);
+        // Reset to normal pagination when search is cleared
+        setFilteredSuggestions([]);
+        setSuggestions([]);
+        setOffset(0);
+        setHasMore(true);
+        setLoadedProductIds(new Set());
+        fetchSmartSuggestions('all', 0, true);
       }
     }
-  }, [searchTerm, suggestions, selectedCategory]);
+  }, [searchTerm, selectedMainTab]);
+
+  // New function to search products directly from database
+  const searchProducts = async (searchQuery) => {
+    try {
+      setLoading(true);
+      setFilteredSuggestions([]);
+      
+      // Search the database directly using the existing products endpoint
+      const response = await api.get(`/products?q=${encodeURIComponent(searchQuery)}&limit=100`);
+      const searchResults = response.data || [];
+      
+      setFilteredSuggestions(searchResults);
+      setLoading(false);
+    } catch (error) {
+      console.error('Error searching products:', error);
+      setLoading(false);
+      showToast('Failed to search products');
+    }
+  };
 
   // Handle back button press
   useEffect(() => {
     const backAction = () => {
-      // If we're viewing a specific category (not 'all'), go back to main view
-      if (selectedCategory !== 'all') {
-        setSelectedCategory('all');
+      // Hierarchical navigation logic
+      if (selectedMainTab === 'smart' && selectedSmartTab !== 'recent') {
+        // If we're in a specific smart sub-tab (favorite, frequent), go back to recent
+        setSelectedSmartTab('recent');
+        setSuggestions([]);
+        fetchSmartSuggestions('recent');
+        return true; // Prevent default back action
+      } else if (selectedMainTab === 'smart') {
+        // If we're in smart tab (showing sub-tabs), go back to ALL tab
+        setSelectedMainTab('all');
+        setSelectedSmartTab('recent');
         setSuggestions([]);
         setOffset(0);
         setHasMore(true);
         fetchSmartSuggestions('all', 0, true);
         return true; // Prevent default back action
+      } else if (selectedMainTab === 'all') {
+        // If we're in ALL tab, go back to Group Detail
+        return false; // Allow default back action (go to Group Detail)
       }
-      return false; // Allow default back action (go to Group Detail)
+      return false; // Allow default back action
     };
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
-  }, [selectedCategory]);
+  }, [selectedMainTab, selectedSmartTab]);
 
   const fetchSmartSuggestions = async (category = 'all', customOffset = 0, reset = false) => {
     try {
       setLoading(true);
-      // For ALL, fetch paginated products from /api/products like homepage
+      // For ALL, fetch random products from suggestions endpoint (like original)
       if (category === 'all') {
-        const response = await api.get(`/products?limit=50&offset=${customOffset}`);
-        const newProducts = response.data || [];
+        const response = await api.get(`/suggestions/smart?type=all&limit=50&groupId=${groupId || 'user'}`);
+        const allProducts = response.data.suggestions || [];
         
-        // Filter out already loaded products to prevent duplicates
-        const uniqueProducts = newProducts.filter(product => 
-          !loadedProductIds.has(product._id || product.productId)
-        );
+        // Filter to only show products with valid images
+        const newProducts = allProducts.filter(product => {
+          const img = product.img || product.image;
+          return img && img !== '' && img !== 'https://via.placeholder.com/100' && img !== 'null';
+        });
         
         if (reset) {
-          setSuggestions(uniqueProducts);
-          setLoadedProductIds(new Set(uniqueProducts.map(p => p._id || p.productId)));
+          // Reset mode: replace all items
+          setSuggestions(newProducts);
+          setLoadedProductIds(new Set(newProducts.map(p => p.productId || p._id)));
           setOffset(50);
-          setHasMore(uniqueProducts.length === 50);
+          setHasMore(newProducts.length === 50);
         } else {
-          setSuggestions(prev => [...prev, ...uniqueProducts]);
-          setLoadedProductIds(prev => new Set([...prev, ...uniqueProducts.map(p => p._id || p.productId)]));
+          // Append mode: add new items to existing ones (Instagram-like)
+          setSuggestions(prev => [...prev, ...newProducts]);
+          setLoadedProductIds(prev => new Set([...prev, ...newProducts.map(p => p.productId || p._id)]));
           setOffset(prev => prev + 50);
-          setHasMore(uniqueProducts.length === 50);
+          setHasMore(newProducts.length === 50);
         }
         
         setLoading(false);
@@ -282,113 +364,131 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
     }
   };
 
-  const renderSuggestion = ({ item, index }) => (
-    <TouchableOpacity 
-      style={styles.suggestionItem}
-      onPress={() => handleAddToCart(item)}
-    >
-      <View style={styles.productImageContainer}>
-        <Image 
-          source={{ uri: item.img || 'https://via.placeholder.com/60' }} 
-          style={styles.productImage}
-          resizeMode="cover"
-        />
-        <View style={[styles.categoryBadge, { backgroundColor: getCategoryColor(item.type) }]}> 
-          <Ionicons name={getCategoryIcon(item.type)} size={12} color="#fff" />
-        </View>
-        {/* Cart indicator for favorites */}
-        {item.type === 'favorite' && item.isInCart && (
-          <View style={[styles.intelligentBadge, { backgroundColor: '#4CAF50' }]}> 
-            <Ionicons name="checkmark-circle" size={10} color="#fff" />
-          </View>
-        )}
-        {/* Intelligent indicators for frequent products */}
-        {item.type === 'frequent' && (
-          <>
-            {item.isOverdue && (
-              <View style={[styles.intelligentBadge, { backgroundColor: '#FF4444' }]}> 
-                <Ionicons name="alert-circle" size={10} color="#fff" />
-              </View>
-            )}
-            {item.isDueSoon && !item.isOverdue && (
-              <View style={[styles.intelligentBadge, { backgroundColor: '#FFA500' }]}> 
-                <Ionicons name="time" size={10} color="#fff" />
-              </View>
-            )}
-            {item.confidence && item.confidence > 0.7 && (
-              <View style={[styles.intelligentBadge, { backgroundColor: '#4CAF50' }]}> 
-                <Ionicons name="checkmark-circle" size={10} color="#fff" />
-              </View>
-            )}
-          </>
-        )}
-      </View>
-      <View style={styles.suggestionInfo}>
-        <Text style={styles.suggestionName}>{item.name}</Text>
-        {/* Show interaction details for favorites */}
-        {item.type === 'favorite' && (
-          <Text style={styles.suggestionReason}>
-            {item.isFavorited && '❤️ Favorited '}
-            {item.isPurchased && '🛒 Purchased '}
-            {item.isAdded && '📝 Added to list '}
-            {item.isInCart && `• In Cart: ${item.cartQuantity || 0}`}
-            {item.totalInteractions > 1 && ` (${item.totalInteractions} interactions)`}
-          </Text>
-        )}
-        {/* Show smart reason for recent */}
-        {item.type === 'recent' && (
-          <>
-            <Text style={styles.suggestionReason}>
-              Bought on {item.tripDate || 'Recent trip'}
-            </Text>
-            {item.quantity > 1 && (
-              <Text style={styles.suggestionReason}>
-                Quantity: {item.quantity}
-              </Text>
-            )}
-          </>
-        )}
-        {/* Show smart reason for frequent */}
-        {item.type === 'frequent' && (
-          <>
-            <Text style={styles.suggestionReason}>
-              Bought {item.frequency} time{item.frequency > 1 ? 's' : ''} in last 5 trips
-            </Text>
-            {item.favoriteCount > 0 && (
-              <Text style={[styles.suggestionReason, { color: '#FF6B6B', fontWeight: 'bold' }]}>★ Favorited by group</Text>
-            )}
-          </>
-        )}
-      </View>
-      {/* ... existing action buttons ... */}
-      <View style={styles.actionButtons}>
-        {/* Heart Icon for Favorites */}
-        <TouchableOpacity 
-          style={styles.heartButton}
-          onPress={() => toggleFavorite(item.productId || item._id)}
-        >
-          <Ionicons 
-            name={favorites.has(item.productId || item._id) ? "heart" : "heart-outline"} 
-            size={20} 
-            color={favorites.has(item.productId || item._id) ? "#FF6B6B" : "#999"} 
+  const renderSuggestion = ({ item, index }) => {
+    const itemId = item.productId || item._id;
+    const isAdding = addingItems.has(itemId);
+    const wasAdded = addedItems.has(itemId);
+    
+    return (
+      <TouchableOpacity 
+        style={styles.suggestionItem}
+        onPress={() => handleAddToCart(item)}
+      >
+        <View style={styles.productImageContainer}>
+          <Image 
+            source={{ uri: item.img || 'https://via.placeholder.com/60' }} 
+            style={styles.productImage}
+            resizeMode="cover"
           />
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.rejectButton}
-          onPress={() => handleRejectSuggestion(item)}
-        >
-          <Ionicons name="close" size={16} color="#FF6B6B" />
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={styles.addButton}
-          onPress={() => handleAddToCart(item)}
-        >
-          <Ionicons name="add" size={20} color="#fff" />
-        </TouchableOpacity>
-    </View>
-    </TouchableOpacity>
-  );
+          <View style={[styles.categoryBadge, { backgroundColor: getCategoryColor(item.type) }]}> 
+            <Ionicons name={getCategoryIcon(item.type)} size={12} color="#fff" />
+          </View>
+          {/* Cart indicator for favorites */}
+          {item.type === 'favorite' && item.isInCart && (
+            <View style={[styles.intelligentBadge, { backgroundColor: '#4CAF50' }]}> 
+              <Ionicons name="checkmark-circle" size={10} color="#fff" />
+            </View>
+          )}
+          {/* Intelligent indicators for frequent products */}
+          {item.type === 'frequent' && (
+            <>
+              {item.isOverdue && (
+                <View style={[styles.intelligentBadge, { backgroundColor: '#FF4444' }]}> 
+                  <Ionicons name="alert-circle" size={10} color="#fff" />
+                </View>
+              )}
+              {item.isDueSoon && !item.isOverdue && (
+                <View style={[styles.intelligentBadge, { backgroundColor: '#FFA500' }]}> 
+                  <Ionicons name="time" size={10} color="#fff" />
+                </View>
+              )}
+              {item.confidence && item.confidence > 0.7 && (
+                <View style={[styles.intelligentBadge, { backgroundColor: '#4CAF50' }]}> 
+                  <Ionicons name="checkmark-circle" size={10} color="#fff" />
+                </View>
+              )}
+            </>
+          )}
+        </View>
+        <View style={styles.suggestionInfo}>
+          <Text style={styles.suggestionName}>{item.name}</Text>
+          {/* Show interaction details for favorites */}
+          {item.type === 'favorite' && (
+            <Text style={styles.suggestionReason}>
+              {item.isFavorited && '❤️ Favorited '}
+              {item.isPurchased && '🛒 Purchased '}
+              {item.isAdded && '📝 Added to list '}
+              {item.isInCart && `• In Cart: ${item.cartQuantity || 0}`}
+              {item.totalInteractions > 1 && ` (${item.totalInteractions} interactions)`}
+            </Text>
+          )}
+          {/* Show smart reason for recent */}
+          {item.type === 'recent' && (
+            <>
+              <Text style={styles.suggestionReason}>
+                Bought on {item.tripDate || 'Recent trip'}
+              </Text>
+              {item.quantity > 1 && (
+                <Text style={styles.suggestionReason}>
+                  Quantity: {item.quantity}
+                </Text>
+              )}
+            </>
+          )}
+          {/* Show smart reason for frequent */}
+          {item.type === 'frequent' && (
+            <>
+              <Text style={styles.suggestionReason}>
+                Bought {item.frequency} time{item.frequency > 1 ? 's' : ''} in last 5 trips
+              </Text>
+              {item.favoriteCount > 0 && (
+                <Text style={[styles.suggestionReason, { color: '#FF6B6B', fontWeight: 'bold' }]}>★ Favorited by group</Text>
+              )}
+            </>
+          )}
+        </View>
+        {/* Action buttons with improved visual feedback */}
+        <View style={styles.actionButtons}>
+          {/* Heart Icon for Favorites */}
+          <TouchableOpacity 
+            style={styles.heartButton}
+            onPress={() => toggleFavorite(item.productId || item._id)}
+          >
+            <Ionicons 
+              name={favorites.has(item.productId || item._id) ? "heart" : "heart-outline"} 
+              size={20} 
+              color={favorites.has(item.productId || item._id) ? "#FF6B6B" : "#999"} 
+            />
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.rejectButton}
+            onPress={() => handleRejectSuggestion(item)}
+          >
+            <Ionicons name="close" size={16} color="#FF6B6B" />
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[
+              styles.addButton,
+              isAdding && styles.addButtonLoading,
+              wasAdded && styles.addButtonSuccess
+            ]}
+            onPress={() => handleAddToCart(item)}
+            disabled={isAdding}
+          >
+            {isAdding ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : wasAdded ? (
+              <Ionicons name="checkmark" size={20} color="#fff" />
+            ) : (
+              <Ionicons name="add" size={20} color="#fff" />
+            )}
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   // Add to group shared list only if groupId is present
   const handleAddToCart = async (item) => {
@@ -396,18 +496,59 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       showToast('You must be in a group to add to the shared list!');
       return;
     }
+    
+    const itemId = item.productId || item._id;
+    
+    // Prevent multiple clicks
+    if (addingItems.has(itemId)) {
+      return;
+    }
+    
+    // Immediate optimistic updates
+    setAddingItems(prev => new Set([...prev, itemId]));
+    setAddedItemsCount(prev => prev + 1);
+    
     try {
-      // console.log('Adding to group shared list:', item);
+      // Make the API call
       await api.post(`/groups/${groupId}/list/items`, {
         name: item.name,
         icon: item.img,
         productId: item.productId || item._id,
         barcode: item.barcode || '',
       });
+      
+      // Success - show visual confirmation
+      setAddingItems(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(itemId);
+        return newSet;
+      });
+      
+      setAddedItems(prev => new Set([...prev, itemId]));
+      
+      // Show success toast
       showToast(`${item.name} added to shared list!`);
-      setAddedItemsCount(prev => prev + 1);
+      
+      // Reset the success state after 2 seconds
+      setTimeout(() => {
+        setAddedItems(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(itemId);
+          return newSet;
+        });
+      }, 2000);
+      
     } catch (error) {
       console.error('Error adding to shared list:', error);
+      
+      // Revert optimistic updates on error
+      setAddingItems(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(itemId);
+        return newSet;
+      });
+      setAddedItemsCount(prev => Math.max(0, prev - 1));
+      
       showToast('Failed to add item to shared list');
     }
   };
@@ -444,7 +585,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
   };
 
   const renderSearchBar = () => {
-    if (selectedCategory !== 'all') return null;
+    if (selectedMainTab !== 'all') return null;
     
     return (
       <View style={styles.searchContainer}>
@@ -473,7 +614,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
   };
 
   const renderCategoryFilter = () => {
-    const categories = CATEGORY_CARDS;
+    const categories = MAIN_TABS;
     return (
       <View style={styles.tabBarContainer}>
         <FlatList
@@ -483,16 +624,56 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
             <TouchableOpacity
               style={[
                 styles.tabCard,
-                selectedCategory === item.key && styles.tabCardActive
+                selectedMainTab === item.key && styles.tabCardActive
               ]}
               onPress={() => {
-                setSelectedCategory(item.key);
+                setSelectedMainTab(item.key);
+                // Reset sub-tab to default when main tab changes
+                setSelectedSmartTab('recent');
+                // Clear suggestions when switching to smart tab
+                if (item.key === 'smart') {
+                  setSuggestions([]);
+                  setFilteredSuggestions([]);
+                }
+              }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name={item.icon} size={22} color={selectedMainTab === item.key ? '#fff' : '#666'} style={{ marginRight: 8 }} />
+              <Text style={[styles.tabCardText, selectedMainTab === item.key && { color: '#fff' }]}>{item.name}</Text>
+            </TouchableOpacity>
+          )}
+          keyExtractor={item => item.key}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tabBarList}
+        />
+      </View>
+    );
+  };
+
+  const renderSmartSubCategoryFilter = () => {
+    const categories = SMART_SUB_TABS;
+    return (
+      <View style={styles.tabBarContainer}>
+        <FlatList
+          horizontal
+          data={categories}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={[
+                styles.tabCard,
+                selectedSmartTab === item.key && styles.tabCardActive
+              ]}
+              onPress={() => {
+                setSelectedSmartTab(item.key);
+                // Clear current suggestions and fetch new ones
+                setSuggestions([]);
+                setFilteredSuggestions([]);
                 fetchSmartSuggestions(item.key);
               }}
               activeOpacity={0.85}
             >
-              <Ionicons name={item.icon} size={22} color={selectedCategory === item.key ? '#fff' : item.color} style={{ marginRight: 8 }} />
-              <Text style={[styles.tabCardText, selectedCategory === item.key && { color: '#fff' }]}>{item.name}</Text>
+              <Ionicons name={item.icon} size={22} color={selectedSmartTab === item.key ? '#fff' : item.color} style={{ marginRight: 8 }} />
+              <Text style={[styles.tabCardText, selectedSmartTab === item.key && { color: '#fff' }]}>{item.name}</Text>
             </TouchableOpacity>
           )}
           keyExtractor={item => item.key}
@@ -505,7 +686,8 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
 
   // Infinite scroll for ALL card
   const handleEndReached = () => {
-    if (selectedCategory === 'all' && hasMore && !loading) {
+    if (selectedMainTab === 'all' && hasMore && !loading && !searchTerm.trim()) {
+      // Only load more if not searching and there are more items
       const nextOffset = offset + 50;
       setOffset(nextOffset);
       fetchSmartSuggestions('all', nextOffset, false);
@@ -523,49 +705,18 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
 
   // Show empty state if no suggestions
   if (!loading && suggestions.length === 0) {
-    if (selectedCategory === 'frequent') {
+    if (selectedMainTab === 'all') {
+      // Empty state for ALL tab
       return (
         <View style={styles.loadingContainer}>
-          <Ionicons name="construct-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
-          <Text style={styles.loadingText}>No frequent items yet!</Text>
+          <Ionicons name="bulb-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
+          <Text style={styles.loadingText}>No products to show!</Text>
           <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
-            Try adding more items to your shopping list to see frequent ones here.
+            Try again later.
           </Text>
         </View>
       );
     }
-    if (selectedCategory === 'recent') {
-      return (
-        <View style={styles.loadingContainer}>
-          <Ionicons name="time-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
-          <Text style={styles.loadingText}>No recent trips yet!</Text>
-          <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
-            Complete your first shopping trip to see recent items here.
-          </Text>
-        </View>
-      );
-    }
-    if (selectedCategory === 'favorite') {
-      return (
-        <View style={styles.loadingContainer}>
-          <Ionicons name="heart-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
-          <Text style={styles.loadingText}>No favorites yet!</Text>
-          <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
-            Favorite items from the ALL card to see them here.
-          </Text>
-        </View>
-      );
-    }
-    // Default empty state for ALL
-    return (
-      <View style={styles.loadingContainer}>
-        <Ionicons name="bulb-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
-        <Text style={styles.loadingText}>No products to show!</Text>
-        <Text style={{ color: '#888', textAlign: 'center', marginTop: 8 }}>
-          Try again later.
-        </Text>
-      </View>
-    );
   }
 
   return (
@@ -593,16 +744,18 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       {renderCategoryFilter()}
       {/* Render search bar for ALL category */}
       {renderSearchBar()}
+      {/* Render smart sub-category filter only when Smart Suggestions tab is selected */}
+      {selectedMainTab === 'smart' && renderSmartSubCategoryFilter()}
       {/* Product suggestions list below the tabs */}
       <FlatList
-        data={selectedCategory === 'all' ? filteredSuggestions : suggestions}
+        data={selectedMainTab === 'all' ? (searchTerm.trim() ? filteredSuggestions : suggestions) : suggestions}
         keyExtractor={(item, index) => `${item._id || item.productId}_${index}`}
         renderItem={renderSuggestion}
         contentContainerStyle={{ padding: 16, paddingBottom: 60 }}
         ListEmptyComponent={
           !loading && (
             <View style={styles.loadingContainer}>
-              {selectedCategory === 'recent' ? (
+              {selectedMainTab === 'smart' && selectedSmartTab === 'recent' ? (
                 <>
                   <Ionicons name="time-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
                   <Text style={styles.loadingText}>No recent trips yet!</Text>
@@ -610,7 +763,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
                     Complete your first shopping trip to see recent items here.
                   </Text>
                 </>
-              ) : selectedCategory === 'favorite' ? (
+              ) : selectedMainTab === 'smart' && selectedSmartTab === 'favorite' ? (
                 <>
                   <Ionicons name="heart-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
                   <Text style={styles.loadingText}>No favorites yet!</Text>
@@ -618,7 +771,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
                     Favorite items from the ALL card to see them here.
                   </Text>
                 </>
-              ) : selectedCategory === 'frequent' ? (
+              ) : selectedMainTab === 'smart' && selectedSmartTab === 'frequent' ? (
                 <>
                   <Ionicons name="construct-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
                   <Text style={styles.loadingText}>No frequent items yet!</Text>
@@ -626,7 +779,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
                     Try adding more items to your shopping list to see frequent ones here.
                   </Text>
                 </>
-              ) : selectedCategory === 'all' && searchTerm.trim() ? (
+              ) : selectedMainTab === 'all' && searchTerm.trim() ? (
                 <>
                   <Ionicons name="search-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
                   <Text style={styles.loadingText}>No products found</Text>
@@ -634,7 +787,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
                     Try a different search term.
                   </Text>
                 </>
-              ) : (
+              ) : selectedMainTab === 'all' ? (
                 <>
                   <Ionicons name="bulb-outline" size={48} color="#bbb" style={{ marginBottom: 12 }} />
                   <Text style={styles.loadingText}>No products to show!</Text>
@@ -642,14 +795,15 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
                     Try again later.
                   </Text>
                 </>
-              )}
+              ) : null}
             </View>
           )
         }
         refreshing={loading && suggestions.length === 0}
         onRefresh={() => {
           setLoadedProductIds(new Set());
-          fetchSmartSuggestions(selectedCategory, 0, true);
+          const currentCategory = getCurrentCategory();
+          fetchSmartSuggestions(currentCategory, 0, true);
         }}
         onEndReached={handleEndReached}
         onEndReachedThreshold={0.5}
@@ -876,6 +1030,12 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  addButtonLoading: {
+    backgroundColor: '#FF6B6B', // Red color for loading
+  },
+  addButtonSuccess: {
+    backgroundColor: '#4CAF50', // Green color for success
   },
   heartButton: {
     padding: 5,

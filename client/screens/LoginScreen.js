@@ -67,12 +67,29 @@ export default function LoginScreen({ navigation }) {
   
   useEffect(() => {
     const checkToken = async () => {
-      const token = await AsyncStorage.getItem('token');
-      if (token) {
-        navigation.reset({
-          index: 0,
-          routes: [{ name: 'beforeMain' }],
-        });
+      try {
+        const token = await AsyncStorage.getItem('token');
+        if (token) {
+          // Validate token by making a test API call
+          const response = await api.get('/auth/verify', {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          
+          // If we get here, token is valid
+          if (response.status === 200) {
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'beforeMain' }],
+            });
+          } else {
+            // Token is invalid, remove it
+            await AsyncStorage.removeItem('token');
+          }
+        }
+      } catch (error) {
+        // Token is invalid or expired, remove it
+        console.log('Token validation failed:', error.message);
+        await AsyncStorage.removeItem('token');
       }
     };
     checkToken();

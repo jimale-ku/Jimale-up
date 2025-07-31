@@ -135,13 +135,13 @@ export default function GroupListScreen({ navigation }) {
             <View style={styles.emptyIconContainer}>
               <Icon name="people-outline" size={80} color="#2E7D32" />
             </View>
-            <Text style={styles.emptyTitle}>No Households Yet</Text>
+            <Text style={styles.emptyTitle}>No Groups Yet</Text>
             <Text style={styles.emptyText}>
-              Create your first household and add as many members as you like!
+              Create your first group and add as many members as you like!
             </Text>
             <TouchableOpacity style={styles.createButton} onPress={() => setShowCreateModal(true)}>
               <Icon name="add" size={20} color="#fff" />
-              <Text style={styles.createButtonText}>Create Household</Text>
+              <Text style={styles.createButtonText}>Create Group</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -171,7 +171,7 @@ export default function GroupListScreen({ navigation }) {
             ))}
             <TouchableOpacity style={styles.createButton} onPress={() => setShowCreateModal(true)}>
               <Icon name="add" size={20} color="#fff" />
-              <Text style={styles.createButtonText}>Create Household</Text>
+              <Text style={styles.createButtonText}>Create Group</Text>
             </TouchableOpacity>
           </>
         )}
@@ -185,9 +185,9 @@ export default function GroupListScreen({ navigation }) {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Create Household</Text>
+            <Text style={styles.modalTitle}>Create Group</Text>
             <TextInput
-              placeholder="Enter household name"
+              placeholder="Enter group name"
               value={groupName}
               onChangeText={setGroupName}
               style={styles.input}

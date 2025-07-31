@@ -19,6 +19,20 @@ const WhereToBuyScreen = ({ route, navigation }) => {
   const [showCelebration, setShowCelebration] = useState(false);
   const { completeTrip } = useContext(PersonalListContext);
 
+  // Format price to avoid floating point precision issues
+  const formatPrice = (price) => {
+    if (price === null || price === undefined || price === 'N/A') {
+      return 'N/A';
+    }
+    // Convert to number and fix floating point precision
+    const numPrice = parseFloat(price);
+    if (isNaN(numPrice)) {
+      return 'N/A';
+    }
+    // Round to 2 decimal places and format
+    return numPrice.toFixed(2);
+  };
+
   useEffect(() => {
     return () => {
       console.log('WhereToBuyScreen unmounted!');
@@ -53,6 +67,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
         setLoading(false);
         return;
       }
+      setCity(cityName); // Fix: Update the city state
       fetchStores({ city: cityName });
     } catch (e) {
       setError('Failed to get location.');
@@ -87,7 +102,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          city,
+          city: locationData.city, // Fix: Use the parameter instead of state
           products: products.map(p => ({
             barcode: p.barcode,
             name: p.name,
@@ -198,7 +213,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
           <View style={styles.storeInfo}>
             <Text style={styles.storeName}>{item.branch}</Text>
             <Text style={styles.storeDetail}>כתובת: {item.address}</Text>
-            <Text style={styles.storeDetail}>מחיר כולל: ₪{item.totalPrice ?? item.price ?? 'N/A'}</Text>
+            <Text style={styles.storeDetail}>מחיר כולל: ₪{formatPrice(item.totalPrice ?? item.price)}</Text>
             <Text style={styles.storeDetail}>מוצרים שנמצאו: {item.itemsFound}</Text>
             <Text style={styles.storeScore}>Score: {item.score || 'N/A'}</Text>
             {item.distance !== null && item.distance !== undefined && (
@@ -258,8 +273,8 @@ const WhereToBuyScreen = ({ route, navigation }) => {
         />
       )}
       {/* Buy button for group trip */}
-      {tripType === 'group' && groupId && (
-        <TouchableOpacity style={{ backgroundColor: '#1976D2', borderRadius: 8, padding: 16, alignItems: 'center', marginTop: 24 }} onPress={handleBuy}>
+      {tripType === 'group' && groupId && stores.length > 0 && (
+        <TouchableOpacity style={{ backgroundColor: '#1976D2', borderRadius: 8, padding: 16, alignItems: 'center', marginTop: 24 }} onPress={() => handleBuy(stores[0])}>
           <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 18 }}>Buy (Complete Group Trip)</Text>
         </TouchableOpacity>
       )}

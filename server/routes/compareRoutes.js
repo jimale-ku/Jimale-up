@@ -428,10 +428,10 @@ router.post('/price', async (req, res) => {
         // Add price regardless of whether it's real or estimated
         if (productPrice > 0) {
           allStoreResults[storeKey].totalPrice += productPrice;
-          allStoreResults[storeKey].itemsFound += 1;
           
-          // Add barcode if not already present
+          // Only increment itemsFound if this is a new product (not already counted)
           if (!allStoreResults[storeKey].foundBarcodes.includes(prod.barcode)) {
+            allStoreResults[storeKey].itemsFound += 1;
             allStoreResults[storeKey].foundBarcodes.push(prod.barcode);
           }
           

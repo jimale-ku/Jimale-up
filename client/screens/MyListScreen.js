@@ -56,7 +56,7 @@ export default function MyListScreen({ navigation }) {
     setPersonalList(list => list.filter(p => !(p._id === item._id || p.name === item.name)));
   };
 
-  // Render each item in the personal list as a card
+  // Render each item in the personal list as a card (with controls)
   const renderItem = ({ item }) => (
     <View style={styles.card}>
       <TouchableOpacity
@@ -87,6 +87,18 @@ export default function MyListScreen({ navigation }) {
           <Ionicons name="add" size={22} color="#2E7D32" />
         </TouchableOpacity>
       </View>
+    </View>
+  );
+
+  // Render each item in the last bought list as a simplified card (read-only)
+  const renderItem2 = ({ item }) => (
+    <View style={styles.card}>
+      <Image
+        source={{ uri: item.img && (item.img.startsWith('http') || item.img.startsWith('data:image/')) ? item.img : PLACEHOLDER_IMAGE }}
+        style={styles.image}
+        resizeMode="cover"
+      />
+      <Text style={styles.productName} numberOfLines={2}>{item.name}</Text>
     </View>
   );
 
@@ -179,7 +191,7 @@ export default function MyListScreen({ navigation }) {
               <FlatList
                 key={'last-bought'}
                 data={lastBoughtItems}
-                renderItem={renderItem}
+                renderItem={renderItem2}
                 keyExtractor={(item, idx) => `${item._id || item.id || item.name}_${idx}`}
                 numColumns={3}
                 contentContainerStyle={{ paddingBottom: 60, paddingHorizontal: CARD_MARGIN }}

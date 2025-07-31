@@ -15,6 +15,8 @@ import {
   StatusBar,
   ScrollView,
 } from 'react-native';
+import { PersonalListProvider } from '../services/PersonalListContext';
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../services/api';
 import { Ionicons } from '@expo/vector-icons';
@@ -46,12 +48,12 @@ export default function MainScreen({ navigation }) {
   const [welcomeType, setWelcomeType] = useState('back'); // 'back' or 'new'
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
-  const [favorites, setFavorites] = useState(new Set());
   const [compareModalVisible, setCompareModalVisible] = useState(false);
   const [compareResults, setCompareResults] = useState([]);
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareCity, setCompareCity] = useState('');
-  const { personalList, setPersonalList } = useContext(PersonalListContext);
+
+  const { personalList, setPersonalList, lastBought, lastStore } = useContext(PersonalListProvider._context || require('../services/PersonalListContext').default);
 
   const [fontsLoaded] = useFonts({
     PlayfairDisplay_700Bold,
@@ -200,35 +202,10 @@ export default function MainScreen({ navigation }) {
     }
   };
 
-  // Heart icon toggle
-  const toggleFavorite = async (productId) => {
-    try {
-      const isFavorited = favorites.has(productId);
-      if (isFavorited) {
-        await api.delete(`/favorites/${productId}`);
-        setFavorites(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(productId);
-          return newSet;
-        });
-      } else {
-        await api.post('/favorites', { productId });
-        setFavorites(prev => {
-          const newSet = new Set(prev);
-          newSet.add(productId);
-          return newSet;
-        });
-      }
-    } catch (error) {
-      console.log('Favorite error:', error?.response?.data || error.message || error);
-      // Removed alert to user
-    }
-  };
-
   const handleAddToCart = async (product) => {
     try {
       let targetListId = null;
-      
+
       if (userLists.length > 0) {
         targetListId = userLists[0]._id;
       } else {
@@ -239,7 +216,7 @@ export default function MainScreen({ navigation }) {
         const res = await api.get('/lists');
         setUserLists(res.data || []);
       }
-      
+
       await addProductToList(product, targetListId);
       showToast(`${product.name} added!`);
       navigation.navigate('MyList', { listId: targetListId });
@@ -256,7 +233,7 @@ export default function MainScreen({ navigation }) {
         icon: product.img,
         productId: product._id,
       });
-      
+
       // Show a quick success feedback instead of alert
       // showToast(`${product.name} added!`); // This is now handled in handleAddToCart
 
@@ -268,7 +245,7 @@ export default function MainScreen({ navigation }) {
 
   // Toast notification system
   const [toast, setToast] = useState({ visible: false, message: '' });
-  
+
   const showToast = (message) => {
     setToast({ visible: true, message });
     setTimeout(() => setToast({ visible: false, message: '' }), 2000);
@@ -297,18 +274,15 @@ export default function MainScreen({ navigation }) {
   const PLACEHOLDER_IMAGE = 'https://via.placeholder.com/100?text=No+Image';
   const renderProductCard = ({ item }) => (
     <View style={styles.productCard}>
-      <TouchableOpacity onPress={() => toggleFavorite(item._id)} style={styles.heartIcon}>
-        <Ionicons name={favorites.has(item._id) ? 'heart' : 'heart-outline'} size={24} color={favorites.has(item._id) ? '#FF6B6B' : '#999'} />
-      </TouchableOpacity>
-      <Image 
-        source={{ uri: item.img && (item.img.startsWith('http') || item.img.startsWith('data:image/')) ? item.img : PLACEHOLDER_IMAGE }} 
+
+      <Image
+        source={{ uri: item.img && (item.img.startsWith('http') || item.img.startsWith('data:image/')) ? item.img : PLACEHOLDER_IMAGE }}
         style={styles.productImage}
         resizeMode="cover"
       />
       <View style={styles.productInfo}>
         <Text style={styles.productName} numberOfLines={2}>{item.name}</Text>
-        <Text style={styles.productPrice}>{item.price || '\u20aa--'}</Text>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.addButton}
           onPress={() => addToPersonalList(item)}
         >
@@ -369,7 +343,7 @@ export default function MainScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar backgroundColor="#2E7D32" barStyle="light-content" />
-      
+
       {/* Header Section */}
       <View style={styles.header}>
         <View style={styles.welcomeSection}>
@@ -405,34 +379,32 @@ export default function MainScreen({ navigation }) {
       {/* Products Section */}
       <View style={styles.productsSection}>
         <Text style={styles.sectionTitle}>🛒 Suggested Products</Text>
-        
-        {isLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#2E7D32" />
-            <Text style={styles.loadingText}>Loading products...</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={filteredProducts}
-            keyExtractor={(item, index) => item._id || index.toString()}
-            renderItem={renderProductCard}
-            numColumns={2}
-            columnWrapperStyle={styles.productRow}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.productsList}
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <Ionicons name="search-outline" size={48} color="#CCC" />
-                <Text style={styles.emptyText}>No products found</Text>
-                <Text style={styles.emptySubtext}>Try adjusting your search</Text>
+
+        <FlatList
+          data={filteredProducts}
+          keyExtractor={(item, index) => item._id || index.toString()}
+          renderItem={renderProductCard}
+          numColumns={2}
+          columnWrapperStyle={styles.productRow}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.productsList}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="search-outline" size={48} color="#CCC" />
+              <Text style={styles.emptyText}>No products found</Text>
+              <Text style={styles.emptySubtext}>Try adjusting your search</Text>
+            </View>
+          }
+          ListFooterComponent={
+            isLoading && offset > 50 ? (
+              <View style={{ paddingVertical: 16 }}>
+                <ActivityIndicator size="small" color="#2E7D32" />
               </View>
-            }
-            onEndReached={handleEndReached}
-            onEndReachedThreshold={0.5}
-            refreshing={isLoading}
-            onRefresh={() => fetchProducts(true)}
-          />
-        )}
+            ) : null
+          }
+          onEndReached={handleEndReached}
+          onEndReachedThreshold={0.5}
+        />
       </View>
 
       {/* Toast Notification */}
@@ -443,7 +415,7 @@ export default function MainScreen({ navigation }) {
       )}
 
       {/* Bottom Navigation */}
-      <View style={[styles.bottomNav, { paddingBottom: insets.bottom + 10 }]}> 
+      <View style={[styles.bottomNav, { paddingBottom: insets.bottom + 10 }]}>
         <TouchableOpacity
           style={styles.navButton}
           onPress={() => navigation.navigate('MyList')}
@@ -460,35 +432,22 @@ export default function MainScreen({ navigation }) {
           <Text style={styles.navButtonText}>Groups</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.navButton}
-          onPress={() => {
-            // Prompt user to select a group before opening Smart Suggestions
-            if (groups && groups.length > 0) {
-              // For now, use the first group as default (or show a group picker for better UX)
-              navigation.navigate('SmartSuggestions', { groupId: groups[0]._id });
-            } else {
-              Alert.alert('No Groups', 'Please join or create a group to use Smart Suggestions.');
-            }
-          }}
-        >
-          <Ionicons name="bulb" size={24} color="#2E7D32" />
-          <Text style={styles.navButtonText}>Smart</Text>
-        </TouchableOpacity>
+
 
         <TouchableOpacity
           style={styles.navButton}
           onPress={async () => {
-            let listIdToUse = null;
-            try {
-              const res = await api.get('/lists');
-              if (res.data && res.data.length > 0) {
-                listIdToUse = res.data[0]._id;
-              }
-            } catch (err) {
-              console.error('Error fetching lists for WhereToBuy navigation:', err);
-            }
-            navigation.navigate('WhereToBuy', { listId: listIdToUse });
+            const products = personalList.map(item => ({
+              barcode: item.barcode || '',
+              name: item.name,
+              quantity: item.quantity || 1,
+              image: item.img || item.icon // Add the image field like group trip
+            }));
+            navigation.navigate('WhereToBuy', {
+              source: 'personal',
+              products,
+              tripType: 'personal',
+            });
           }}
         >
           <Ionicons name="storefront" size={24} color="#2E7D32" />
@@ -496,18 +455,6 @@ export default function MainScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity
-        style={{ backgroundColor: '#2E7D32', borderRadius: 8, padding: 16, alignItems: 'center', marginVertical: 12 }}
-        onPress={() => {
-          if (groups && groups.length > 0) {
-            navigation.navigate('SmartSuggestions', { groupId: groups[0]._id });
-          } else {
-            Alert.alert('No Groups', 'Please join or create a group to use Smart Suggestions.');
-          }
-        }}
-      >
-        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 18 }}>Smart Suggestions</Text>
-      </TouchableOpacity>
 
       {/* Removed Compare Prices button from home page as per user request */}
 
