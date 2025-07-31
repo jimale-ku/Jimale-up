@@ -7,7 +7,91 @@ const cheerio = require('cheerio');
 const StorePriceCache = require('../models/StorePriceCache');
 const { getDistances } = require('../services/distance');
 
-async function fetchWithRetry(url, params, headers, maxRetries = 3) {
+// Add in-memory cache for better performance
+const priceCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
+
+// Rate limiting to prevent overwhelming the external API
+const requestQueue = [];
+let isProcessing = false;
+const MAX_CONCURRENT_REQUESTS = 3;
+let activeRequests = 0;
+
+// Rate limiter function
+async function rateLimitedRequest(url, params, headers) {
+  return new Promise((resolve, reject) => {
+    const request = { url, params, headers, resolve, reject };
+    requestQueue.push(request);
+    processQueue();
+  });
+}
+
+async function processQueue() {
+  if (isProcessing || activeRequests >= MAX_CONCURRENT_REQUESTS) {
+    return;
+  }
+  
+  isProcessing = true;
+  
+  while (requestQueue.length > 0 && activeRequests < MAX_CONCURRENT_REQUESTS) {
+    const request = requestQueue.shift();
+    activeRequests++;
+    
+    try {
+      const response = await fetchWithRetry(request.url, request.params, request.headers);
+      request.resolve(response);
+    } catch (error) {
+      request.reject(error);
+    } finally {
+      activeRequests--;
+      // Small delay between requests to be respectful to the external API
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+  }
+  
+  isProcessing = false;
+  
+  // If there are still items in the queue, process them
+  if (requestQueue.length > 0) {
+    setTimeout(processQueue, 100);
+  }
+}
+
+// Cache management functions
+function getCacheKey(city, searchTerm) {
+  return `${city}:${searchTerm}`;
+}
+
+function getFromCache(city, searchTerm) {
+  const key = getCacheKey(city, searchTerm);
+  const cached = priceCache.get(key);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    console.log(`[CACHE] Hit for ${searchTerm} in ${city}`);
+    return cached.data;
+  }
+  return null;
+}
+
+function setCache(city, searchTerm, data) {
+  const key = getCacheKey(city, searchTerm);
+  priceCache.set(key, {
+    data,
+    timestamp: Date.now()
+  });
+  console.log(`[CACHE] Set for ${searchTerm} in ${city}`);
+}
+
+// Clean old cache entries periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of priceCache.entries()) {
+    if (now - value.timestamp > CACHE_TTL) {
+      priceCache.delete(key);
+    }
+  }
+}, CACHE_TTL);
+
+async function fetchWithRetry(url, params, headers, maxRetries = 2) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[DEBUG] Attempt ${attempt}/${maxRetries} for URL:`, url);
@@ -15,7 +99,7 @@ async function fetchWithRetry(url, params, headers, maxRetries = 3) {
       const response = await axios.get(url, { 
         params, 
         headers,
-        timeout: 10000 // 10 second timeout
+        timeout: 5000 // Reduced from 10s to 5s
       });
       
       return response;
@@ -26,8 +110,8 @@ async function fetchWithRetry(url, params, headers, maxRetries = 3) {
         throw error;
       }
       
-      // Wait before retrying (exponential backoff)
-      const delay = Math.pow(2, attempt) * 1000;
+      // Reduced delay between retries
+      const delay = Math.pow(1.5, attempt) * 500; // 750ms, 1125ms instead of 2s, 4s
       console.log(`[DEBUG] Waiting ${delay}ms before retry...`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
@@ -40,22 +124,23 @@ async function fetchCompare(locationCity, searchTerm) {
   const url = 'https://chp.co.il/main_page/compare_results';
   let allResults = []; // Local variable to accumulate results
   
-  // Multiple search strategies
+  // Check cache first
+  const cached = getFromCache(locationCity, searchTerm);
+  if (cached) {
+    return cached;
+  }
+  
+  // Optimized search strategies - reduced from 7+ to 3-4 strategies
   const searchStrategies = [];
   
   // Strategy 1: Original search term (barcode or name)
   searchStrategies.push(searchTerm);
   
-  // Strategy 2: Enhanced barcode handling with multiple padding options
+  // Strategy 2: Enhanced barcode handling - simplified
   if (/^\d+$/.test(searchTerm)) {
     if (searchTerm.length < 13) {
-      // Try different padding lengths for short barcodes
+      // Only try the most common padding
       searchStrategies.push(searchTerm.padStart(13, '0'));
-      if (searchTerm.length === 8) {
-        searchStrategies.push(searchTerm.padStart(12, '0'));
-        searchStrategies.push(searchTerm.padStart(10, '0'));
-        searchStrategies.push(searchTerm.padStart(9, '0'));
-      }
     }
     
     // Strategy 3: If it's a barcode, try without leading zeros
@@ -63,37 +148,17 @@ async function fetchCompare(locationCity, searchTerm) {
       const trimmedBarcode = searchTerm.replace(/^0+/, '');
       searchStrategies.push(trimmedBarcode);
     }
-    
-    // Strategy 4: Try barcode with different prefixes
-    if (searchTerm.length >= 8) {
-      // Try with common Israeli barcode prefixes
-      const prefixes = ['729', '7290', '72900'];
-      for (const prefix of prefixes) {
-        if (!searchTerm.startsWith(prefix)) {
-          const prefixedBarcode = prefix + searchTerm;
-          if (prefixedBarcode.length <= 13) {
-            searchStrategies.push(prefixedBarcode);
-          }
-        }
-      }
-    }
   }
   
-  // Strategy 5: Enhanced name variations for non-barcode searches
+  // Strategy 4: Enhanced name variations - simplified
   if (!/^\d+$/.test(searchTerm)) {
     // Remove common suffixes like "800פג" from "תירס 800פג"
     const cleanName = searchTerm.replace(/\s+\d+.*$/, '').trim();
-    if (cleanName !== searchTerm) {
+    if (cleanName !== searchTerm && cleanName.length >= 3) {
       searchStrategies.push(cleanName);
     }
     
-    // Try without Hebrew diacritics
-    const withoutDiacritics = searchTerm.replace(/[\u0591-\u05C7]/g, '');
-    if (withoutDiacritics !== searchTerm) {
-      searchStrategies.push(withoutDiacritics);
-    }
-    
-    // Strategy 6: Try brand name only (first word)
+    // Try brand name only (first word) - most effective strategy
     const words = searchTerm.split(' ');
     if (words.length > 1) {
       const brandName = words[0];
@@ -101,20 +166,9 @@ async function fetchCompare(locationCity, searchTerm) {
         searchStrategies.push(brandName);
       }
     }
-    
-    // Strategy 7: Try without common words
-    const commonWords = ['מ"ל', 'גרם', 'ליטר', 'יח', 'חטיף', 'משקה'];
-    let cleanedName = searchTerm;
-    for (const word of commonWords) {
-      cleanedName = cleanedName.replace(new RegExp(`\\s*${word}\\s*`, 'g'), ' ');
-    }
-    cleanedName = cleanedName.trim();
-    if (cleanedName !== searchTerm && cleanedName.length >= 3) {
-      searchStrategies.push(cleanedName);
-    }
   }
   
-  console.log('[DEBUG] Search strategies for:', searchTerm, ':', searchStrategies);
+  console.log('[DEBUG] Optimized search strategies for:', searchTerm, ':', searchStrategies);
   
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -124,7 +178,7 @@ async function fetchCompare(locationCity, searchTerm) {
     'Referer': 'https://chp.co.il/'
   };
 
-  // Try each search strategy
+  // Try each search strategy with early exit
   for (const strategy of searchStrategies) {
     try {
       const params = {
@@ -138,11 +192,8 @@ async function fetchCompare(locationCity, searchTerm) {
       
       console.log('[DEBUG] Trying search strategy:', strategy);
       
-      const { data: html } = await axios.get(url, { 
-        params, 
-        headers,
-        timeout: 10000 // 10 second timeout
-      });
+      const response = await rateLimitedRequest(url, params, headers);
+      const { data: html } = response;
       
       // ENHANCED DEBUGGING: Check if we got a valid response
       console.log(`[DEBUG] HTML response length for ${searchTerm}:`, html.length);
@@ -162,78 +213,67 @@ async function fetchCompare(locationCity, searchTerm) {
         if (errorMessages) {
           console.log(`[DEBUG] Error messages found:`, errorMessages);
         }
+        continue; // Try next strategy
       }
 
       // Updated selector for results-table
-      $('.results-table tbody tr').each((_, row) => {
-        const tds = $(row).find('td');
-        if (tds.length >= 5) {
-          const chain = $(tds[0]).text().trim();
-          const storeName = $(tds[1]).text().trim();
-          const address = $(tds[2]).text().trim();
-          const price = parseFloat($(tds[4]).text().trim());
+      resultsTable.each((i, row) => {
+        const $row = $(row);
+        const branch = $row.find('td:nth-child(1)').text().trim();
+        const address = $row.find('td:nth-child(2)').text().trim();
+        const priceText = $row.find('td:nth-child(3)').text().trim();
+        const quantityText = $row.find('td:nth-child(4)').text().trim();
+        
+        if (branch && address && priceText) {
+          const price = parseFloat(priceText.replace(/[^\d.]/g, ''));
+          const quantity = parseInt(quantityText.replace(/[^\d]/g, '')) || 1;
           
-          if (!isNaN(price) && storeName) {
-            const key = `${storeName} - ${address}`;
-            if (!results[key]) {
-              results[key] = { 
-                chain, 
-                storeName, 
-                address, 
-                totalPrice: 0, 
+          if (!isNaN(price) && price > 0) {
+            if (!results[branch]) {
+              results[branch] = {
+                branch,
+                address,
+                totalPrice: 0,
                 itemsFound: 0,
-                itemPrices: {}
+                itemPrices: {},
+                productDetails: {}
               };
             }
-            results[key].totalPrice += price;
-            results[key].itemsFound += 1;
-            results[key].itemPrices[searchTerm] = price; // Use original search term as key
-            console.log('[DEBUG] Found price for', searchTerm, 'using strategy', strategy, ':', price);
+            
+            results[branch].totalPrice += price;
+            results[branch].itemsFound += 1;
+            results[branch].itemPrices[searchTerm] = price;
+            results[branch].productDetails[searchTerm] = {
+              name: searchTerm,
+              price: price,
+              quantity: quantity
+            };
           }
         }
       });
       
-      // If we found results, store them but continue trying other strategies
+      // If we found results, add them and potentially exit early
       if (Object.keys(results).length > 0) {
-        console.log('[DEBUG] Success with strategy:', strategy, 'Found', Object.keys(results).length, 'stores');
+        allResults = Object.values(results);
+        console.log(`[DEBUG] Found ${allResults.length} stores for ${searchTerm} with strategy: ${strategy}`);
         
-        // City filtering
-        const cityNormalized = (locationCity || '').trim().toLowerCase();
-        const filteredResults = Object.values(results).filter(r =>
-          r.address && r.address.toLowerCase().includes(cityNormalized)
-        );
-        
-        console.log(`[DEBUG] After city filtering (${cityNormalized}):`, filteredResults.length, 'stores');
-        
-        // Store results but don't return yet - try other strategies
-        allResults.push(...filteredResults.map(r => ({
-          branch: r.chain,
-          address: r.address,
-          totalPrice: parseFloat(r.totalPrice).toFixed(2),
-          itemsFound: r.itemsFound,
-          itemPrices: r.itemPrices
-        })));
+        // Early exit: if we have good results, don't try more strategies
+        if (allResults.length >= 2) {
+          console.log(`[DEBUG] Early exit for ${searchTerm} - found ${allResults.length} stores`);
+          break;
+        }
       }
       
-      // Add delay between requests to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-    } catch (err) {
-      console.error('[DEBUG] Strategy failed:', strategy, err.message);
+    } catch (error) {
+      console.error(`[DEBUG] Error with strategy ${strategy}:`, error.message);
       continue; // Try next strategy
     }
   }
   
-  console.log('[DEBUG] All search strategies completed for:', searchTerm);
+  // Cache the results
+  setCache(locationCity, searchTerm, allResults);
   
-  // Return all accumulated results or empty array if none found
-  if (allResults.length > 0) {
-    console.log('[DEBUG] Returning', allResults.length, 'total results for', searchTerm);
-    return allResults;
-  }
-  
-  console.log('[DEBUG] No results found for:', searchTerm);
-  return [];
+  return allResults;
 }
 
 // Enhanced product search with fallback
@@ -375,30 +415,77 @@ router.post('/price', async (req, res) => {
       return res.status(400).json({ error: 'Missing city or products array. Please enter a valid city and add products to your list.' });
     }
     
-    // For each product, search individually and aggregate results
-    let allStoreResults = {};
+    console.log(`[PERFORMANCE] Starting optimized processing for ${products.length} products`);
+    const startTime = Date.now();
     
-    for (let i = 0; i < products.length; i++) {
-      const prod = products[i];
-      console.log(`[DEBUG] ===== PRODUCT ${i + 1}/${products.length} =====`);
-      console.log(`[DEBUG] Product: ${prod.name} (Barcode: ${prod.barcode})`);
-      
-      // Use enhanced search with fallback
-      let prodResults = await searchProductWithFallback(city, prod);
-      
-      console.log(`[DEBUG] Product ${prod.name} returned ${prodResults ? prodResults.length : 0} store results`);
-      if (prodResults && prodResults.length > 0) {
-        console.log(`[DEBUG] First store result for ${prod.name}:`, {
-          branch: prodResults[0].branch,
-          address: prodResults[0].address,
-          totalPrice: prodResults[0].totalPrice,
-          itemsFound: prodResults[0].itemsFound,
-          isFallback: prodResults[0].isFallback || false
-        });
+    // BATCH OPTIMIZATION: Group similar products to reduce API calls
+    const productGroups = new Map();
+    
+    for (const prod of products) {
+      // Group by barcode (exact match)
+      const barcodeKey = `barcode:${prod.barcode}`;
+      if (productGroups.has(barcodeKey)) {
+        productGroups.get(barcodeKey).push(prod);
+      } else {
+        productGroups.set(barcodeKey, [prod]);
       }
       
-      // Aggregate results by store
-      for (const storeData of prodResults || []) {
+      // Group by brand name (first word)
+      const words = prod.name.split(' ');
+      if (words.length > 1) {
+        const brandKey = `brand:${words[0]}`;
+        if (productGroups.has(brandKey)) {
+          productGroups.get(brandKey).push(prod);
+        } else {
+          productGroups.set(brandKey, [prod]);
+        }
+      }
+    }
+    
+    console.log(`[PERFORMANCE] Grouped ${products.length} products into ${productGroups.size} batches`);
+    
+    // PARALLEL PROCESSING: Process unique products only
+    const uniqueProducts = Array.from(new Set(products.map(p => p.barcode)));
+    const uniqueProductData = products.filter((prod, index, arr) => 
+      arr.findIndex(p => p.barcode === prod.barcode) === index
+    );
+    
+    const productPromises = uniqueProductData.map(async (prod, index) => {
+      console.log(`[DEBUG] ===== UNIQUE PRODUCT ${index + 1}/${uniqueProductData.length} =====`);
+      console.log(`[DEBUG] Product: ${prod.name} (Barcode: ${prod.barcode})`);
+      
+      try {
+        // Use enhanced search with fallback
+        const prodResults = await searchProductWithFallback(city, prod);
+        
+        console.log(`[DEBUG] Product ${prod.name} returned ${prodResults ? prodResults.length : 0} store results`);
+        if (prodResults && prodResults.length > 0) {
+          console.log(`[DEBUG] First store result for ${prod.name}:`, {
+            branch: prodResults[0].branch,
+            address: prodResults[0].address,
+            totalPrice: prodResults[0].totalPrice,
+            itemsFound: prodResults[0].itemsFound,
+            isFallback: prodResults[0].isFallback || false
+          });
+        }
+        
+        return { product: prod, results: prodResults || [] };
+      } catch (error) {
+        console.error(`[DEBUG] Error processing product ${prod.name}:`, error);
+        return { product: prod, results: [] };
+      }
+    });
+    
+    // Wait for all unique products to be processed in parallel
+    const productResults = await Promise.all(productPromises);
+    
+    console.log(`[PERFORMANCE] Parallel processing completed in ${Date.now() - startTime}ms`);
+    
+    // Aggregate results by store
+    let allStoreResults = {};
+    
+    for (const { product: prod, results: prodResults } of productResults) {
+      for (const storeData of prodResults) {
         // Use branch name as store key to group all stores of the same chain
         const storeKey = storeData.branch;
         

@@ -213,7 +213,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
           <View style={styles.storeInfo}>
             <Text style={styles.storeName}>{item.branch}</Text>
             <Text style={styles.storeDetail}>כתובת: {item.address}</Text>
-            <Text style={styles.storeDetail}>מחיר כולל: ₪{formatPrice(item.totalPrice ?? item.price)}</Text>
+            <Text style={styles.storeDetail}>מחיר כולל: ₪{formatPrice(item.totalPrice ?? item.price ?? 'N/A')}</Text>
             <Text style={styles.storeDetail}>מוצרים שנמצאו: {item.itemsFound}</Text>
             <Text style={styles.storeScore}>Score: {item.score || 'N/A'}</Text>
             {item.distance !== null && item.distance !== undefined && (
@@ -235,14 +235,30 @@ const WhereToBuyScreen = ({ route, navigation }) => {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.header}>איפה כדאי לקנות?</Text>
+      {/* Clean Professional Header */}
+      <View style={styles.header}>
+        <TouchableOpacity 
+          style={styles.backButton} 
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="arrow-back" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Where to Buy?</Text>
+        <View style={styles.headerRight} />
+      </View>
+
+      <Text style={styles.mainTitle}>איפה כדאי לקנות?</Text>
       <View style={styles.cardRow}>
         <TouchableOpacity style={styles.smartCard} onPress={handleUseGPS}>
-          <Text style={styles.cardIcon}>📍</Text>
+          <View style={styles.cardIconContainer}>
+            <Ionicons name="location" size={32} color="#FF6B6B" />
+          </View>
           <Text style={styles.cardText}>השתמש במיקום שלי</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.smartCard} onPress={handleManualEntry}>
-          <Text style={styles.cardIcon}>🏙️</Text>
+          <View style={styles.cardIconContainer}>
+            <Ionicons name="business" size={32} color="#4ECDC4" />
+          </View>
           <Text style={styles.cardText}>הזן עיר ידנית</Text>
         </TouchableOpacity>
       </View>
@@ -262,7 +278,12 @@ const WhereToBuyScreen = ({ route, navigation }) => {
           </TouchableOpacity>
         </View>
       )}
-      {loading && <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 30 }} />}
+      {loading && (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#2E7D32" />
+          <Text style={styles.loadingText}>מחפש חנויות...</Text>
+        </View>
+      )}
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {!loading && stores.length > 0 && (
         <FlatList
@@ -274,13 +295,13 @@ const WhereToBuyScreen = ({ route, navigation }) => {
       )}
       {/* Buy button for group trip */}
       {tripType === 'group' && groupId && stores.length > 0 && (
-        <TouchableOpacity style={{ backgroundColor: '#1976D2', borderRadius: 8, padding: 16, alignItems: 'center', marginTop: 24 }} onPress={() => handleBuy(stores[0])}>
-          <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 18 }}>Buy (Complete Group Trip)</Text>
+        <TouchableOpacity style={styles.completeTripButton} onPress={() => handleBuy(stores[0])}>
+          <Text style={styles.completeTripButtonText}>Buy (Complete Group Trip)</Text>
         </TouchableOpacity>
       )}
       {/* Celebration animation */}
       {showCelebration && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.9)', justifyContent: 'center', alignItems: 'center', zIndex: 100 }}>
+        <View style={styles.celebrationOverlay}>
           {console.log('Celebration animation should be visible:', showCelebration)}
           <LottieView
             source={require('../assets/animations/beforeShopping.json')}
@@ -288,7 +309,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
             loop={false}
             style={{ width: 300, height: 300 }}
           />
-          <Text style={{ fontSize: 28, fontWeight: 'bold', color: '#1976D2', marginTop: 24 }}>Hurray! Trip Complete!</Text>
+          <Text style={styles.celebrationText}>Hurray! Trip Complete!</Text>
         </View>
       )}
       {!loading && stores.length === 0 && locationMethod && !error && (
@@ -299,47 +320,143 @@ const WhereToBuyScreen = ({ route, navigation }) => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff', padding: 20 },
-  header: { fontSize: 24, fontWeight: 'bold', marginBottom: 20, alignSelf: 'center' },
-  cardRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#f8f9fa',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  backButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#f8f9fa',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    textAlign: 'center',
+    flex: 1,
+  },
+  headerRight: {
+    width: 40,
+  },
+  mainTitle: { 
+    fontSize: 28, 
+    fontWeight: 'bold', 
+    marginBottom: 20, 
+    alignSelf: 'center',
+    color: '#333',
+    textAlign: 'center',
+    marginTop: 20,
+    paddingHorizontal: 20,
+  },
+  cardRow: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    marginBottom: 20,
+    gap: 15,
+    paddingHorizontal: 20,
+  },
   smartCard: {
     flex: 1,
-    backgroundColor: '#f2f2f2',
+    backgroundColor: '#fff',
     borderRadius: 16,
     padding: 20,
-    marginHorizontal: 5,
     alignItems: 'center',
-    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
-  cardIcon: { fontSize: 32, marginBottom: 8 },
-  cardText: { fontSize: 16, fontWeight: '500' },
-  cityInputContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  cityInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 10,
-    fontSize: 16,
-    marginRight: 10,
+  cardIconContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#f8f9fa',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
   },
-  citySubmitBtn: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 8,
+  cardText: { 
+    fontSize: 16, 
+    fontWeight: '600',
+    textAlign: 'center',
+    color: '#333',
   },
-  citySubmitText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  storeCard: {
+  cityInputContainer: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    marginBottom: 10,
     backgroundColor: '#fff',
     borderRadius: 12,
-    padding: 16,
-    marginVertical: 8,
-    marginHorizontal: 12,
+    paddingHorizontal: 15,
     shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
     elevation: 2,
+    marginHorizontal: 20,
+  },
+  cityInput: {
+    flex: 1,
+    paddingVertical: 15,
+    fontSize: 16,
+    color: '#333',
+  },
+  citySubmitBtn: {
+    backgroundColor: '#1976D2',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  citySubmitText: { 
+    color: '#fff', 
+    fontWeight: 'bold', 
+    fontSize: 16 
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    marginTop: 30,
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#2E7D32',
+    fontWeight: 'bold',
+  },
+  error: { 
+    color: '#FF6B6B', 
+    marginTop: 20, 
+    textAlign: 'center',
+    fontSize: 16,
+    paddingHorizontal: 20,
+  },
+  storeCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 20,
+    marginVertical: 8,
+    marginHorizontal: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
   storeHeader: {
     flexDirection: 'row',
@@ -350,10 +467,10 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: '#f0f8ff',
+    backgroundColor: '#f8f9fa',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 15,
   },
   storeInfo: {
     flex: 1,
@@ -361,33 +478,76 @@ const styles = StyleSheet.create({
   storeName: {
     fontSize: 18,
     fontWeight: 'bold',
+    color: '#333',
     marginBottom: 4,
-    color: '#222',
   },
   storeDetail: {
     fontSize: 14,
-    color: '#444',
-    marginBottom: 2,
+    color: '#666',
+    marginBottom: 4,
+    lineHeight: 20,
   },
   storeScore: {
     fontSize: 14,
-    color: '#1976D2',
+    color: '#4CAF50',
     fontWeight: 'bold',
-    marginBottom: 2,
+    marginTop: 8,
   },
   buyButton: {
     backgroundColor: '#1976D2',
     borderRadius: 8,
     padding: 12,
     alignItems: 'center',
+    marginTop: 10,
   },
   buyButtonText: {
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
   },
-  error: { color: 'red', marginTop: 20, textAlign: 'center' },
-  noResults: { color: '#888', marginTop: 30, textAlign: 'center', fontSize: 16 },
+  completeTripButton: {
+    backgroundColor: '#1976D2',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    marginHorizontal: 20,
+    marginBottom: 20,
+  },
+  completeTripButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 18,
+  },
+  noResults: { 
+    color: '#888', 
+    marginTop: 30, 
+    textAlign: 'center', 
+    fontSize: 16,
+    paddingHorizontal: 20,
+  },
+  celebrationOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  celebrationText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#fff',
+    textAlign: 'center',
+  },
 });
 
 export default WhereToBuyScreen; 
