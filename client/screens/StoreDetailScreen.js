@@ -32,15 +32,12 @@ const StoreDetailScreen = ({ route, navigation }) => {
   // All products should now have prices (real or estimated)
   const allProducts = products;
   
-  // Calculate totals using individual item prices from API
-  const totalPrice = allProducts.reduce((sum, prod) => {
-    const itemPrice = itemPrices[prod.barcode] || 0;
-    return sum + itemPrice;
-  }, 0);
-  
-  // Count real vs estimated prices
-  const realPriceCount = Object.keys(realPrices).length;
-  const estimatedPriceCount = Object.keys(estimatedPrices).length;
+  // Use the backend-calculated totals and counts
+  const realPriceCount = store.realPriceCount || Object.keys(realPrices).length;
+  const estimatedPriceCount = store.estimatedPriceCount || Object.keys(estimatedPrices).length;
+  const realPriceTotal = store.realPriceTotal || Object.values(realPrices).reduce((sum, price) => sum + price, 0);
+  const estimatedPriceTotal = store.estimatedPriceTotal || Object.values(estimatedPrices).reduce((sum, price) => sum + price, 0);
+  const totalPrice = store.totalPrice || (realPriceTotal + estimatedPriceTotal);
 
   const handleBuy = async () => {
     console.log('Buy button pressed', { tripType, store });
@@ -148,9 +145,14 @@ const StoreDetailScreen = ({ route, navigation }) => {
             </ScrollView>
             <View style={styles.totalSection}>
               <Text style={styles.totalText}>סה"כ: ₪{totalPrice.toFixed(2)}</Text>
-              {estimatedPriceCount > 0 && (
+              {realPriceTotal > 0 && (
+                <Text style={styles.realTotalText}>
+                  מחירים אמיתיים: ₪{realPriceTotal.toFixed(2)}
+                </Text>
+              )}
+              {estimatedPriceTotal > 0 && (
                 <Text style={styles.estimatedTotalText}>
-                  כולל ₪{Object.values(estimatedPrices).reduce((sum, price) => sum + price, 0).toFixed(2)} מחירים משוערים
+                  מחירים משוערים: ₪{estimatedPriceTotal.toFixed(2)}
                 </Text>
               )}
             </View>
@@ -310,6 +312,13 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#1976D2',
     textAlign: 'right',
+  },
+  realTotalText: {
+    fontSize: 12,
+    color: '#4CAF50',
+    textAlign: 'right',
+    fontWeight: '600',
+    marginTop: 4,
   },
   estimatedTotalText: {
     fontSize: 12,

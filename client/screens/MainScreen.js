@@ -52,6 +52,7 @@ export default function MainScreen({ navigation }) {
   const [compareResults, setCompareResults] = useState([]);
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareCity, setCompareCity] = useState('');
+  const [tripTypeModalVisible, setTripTypeModalVisible] = useState(false);
 
   const { personalList, setPersonalList, lastBought, lastStore } = useContext(PersonalListProvider._context || require('../services/PersonalListContext').default);
 
@@ -436,19 +437,7 @@ export default function MainScreen({ navigation }) {
 
         <TouchableOpacity
           style={styles.navButton}
-          onPress={async () => {
-            const products = personalList.map(item => ({
-              barcode: item.barcode || '',
-              name: item.name,
-              quantity: item.quantity || 1,
-              image: item.img || item.icon // Add the image field like group trip
-            }));
-            navigation.navigate('WhereToBuy', {
-              source: 'personal',
-              products,
-              tripType: 'personal',
-            });
-          }}
+          onPress={() => setTripTypeModalVisible(true)}
         >
           <Ionicons name="storefront" size={24} color="#2E7D32" />
           <Text style={styles.navButtonText}>Stores</Text>
@@ -458,35 +447,55 @@ export default function MainScreen({ navigation }) {
 
       {/* Removed Compare Prices button from home page as per user request */}
 
-      {/* Modal for Compare Prices (if needed elsewhere) */}
-      {/*
-      <Modal visible={compareModalVisible} animationType="slide" onRequestClose={() => setCompareModalVisible(false)}>
-        <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>Top 5 Stores</Text>
-          {compareLoading ? (
-            <ActivityIndicator size="large" color="#2E7D32" />
-          ) : (
-            compareResults.length > 0 ? compareResults.map((store, idx) => {
-              return (
-                <View key={idx} style={styles.resultCard}>
-                  <Text style={styles.storeName}>{store.branch}</Text>
-                  <Text style={styles.storeAddress}>{store.address}</Text>
-                  {store.distance !== undefined && store.distance !== null && (
-                    <Text style={styles.storeDistance}>
-                      Distance: {store.distance.toFixed(2)} km
-                    </Text>
-                  )}
-                  <Text style={styles.totalPrice}>₪{store.totalPrice}</Text>
-                </View>
-              );
-            }) : <Text>No results found.</Text>
-          )}
-          <TouchableOpacity onPress={() => setCompareModalVisible(false)} style={styles.closeButton}>
-            <Text style={styles.closeButtonText}>Close</Text>
-          </TouchableOpacity>
+      {/* Trip Type Selection Modal */}
+      <Modal 
+        visible={tripTypeModalVisible} 
+        animationType="slide" 
+        transparent={true}
+        onRequestClose={() => setTripTypeModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.tripTypeModal}>
+            <Text style={styles.modalTitle}>Choose Trip Type</Text>
+            <Text style={styles.modalSubtitle}>Select how you want to compare store prices</Text>
+            
+            <TouchableOpacity 
+              style={styles.tripOption}
+              onPress={() => {
+                setTripTypeModalVisible(false);
+                navigation.navigate('MyList'); // Navigate to Personal List Page
+              }}
+            >
+              <View style={styles.tripOptionIcon}>
+                <Ionicons name="person" size={32} color="#1976D2" />
+              </View>
+              <Text style={styles.tripOptionText}>Personal Trip</Text>
+              <Text style={styles.tripOptionSubtext}>Compare prices for your personal shopping list</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.tripOption}
+              onPress={() => {
+                setTripTypeModalVisible(false);
+                navigation.navigate('GroupList'); // Navigate to Group List Page
+              }}
+            >
+              <View style={styles.tripOptionIcon}>
+                <Ionicons name="people" size={32} color="#4CAF50" />
+              </View>
+              <Text style={styles.tripOptionText}>Group Trip</Text>
+              <Text style={styles.tripOptionSubtext}>Compare prices for group shopping</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.cancelButton}
+              onPress={() => setTripTypeModalVisible(false)}
+            >
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
-      */}
 
 
     </SafeAreaView>
@@ -685,6 +694,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
   modalContent: {
     backgroundColor: '#FFFFFF',
@@ -694,16 +704,16 @@ const styles = StyleSheet.create({
     maxWidth: 300,
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#333',
-    marginBottom: 20,
+    marginBottom: 10,
     textAlign: 'center',
   },
   modalSubtitle: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#666',
-    marginBottom: 15,
+    marginBottom: 20,
     textAlign: 'center',
   },
   modalInput: {
@@ -824,5 +834,59 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  tripTypeModal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 30,
+    width: '90%',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  tripOption: {
+    backgroundColor: '#F5F5F5',
+    borderRadius: 15,
+    padding: 20,
+    marginVertical: 10,
+    width: '100%',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  tripOptionIcon: {
+    marginBottom: 10,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: '#E0F2F7',
+  },
+  tripOptionText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 5,
+    textAlign: 'center',
+  },
+  tripOptionSubtext: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+  },
+  cancelButton: {
+    marginTop: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    backgroundColor: '#F5F5F5',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '500',
   },
 });

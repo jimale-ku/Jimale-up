@@ -44,6 +44,8 @@ router.post('/:groupId/list/items', auth, async (req, res) => {
     const Group = require('../models/Group');
     console.log('POST /groups/:groupId/list/items called');
     console.log('groupId:', req.params.groupId);
+    console.log('userId:', req.userId);
+    
     const group = await Group.findById(req.params.groupId).populate('list');
     if (!group) {
       console.log('Group not found');
@@ -53,6 +55,20 @@ router.post('/:groupId/list/items', auth, async (req, res) => {
       console.log('Group has no shared list');
       return res.status(404).json({ message: 'Group has no shared list' });
     }
+    
+    // Check if user is a member of the group
+    console.log('Group members:', group.members);
+    console.log('User ID:', req.userId);
+    
+    // Check if user is in the members array (members are objects with user and role)
+    const isMember = group.members.some(member => member.user.toString() === req.userId);
+    console.log('Is user a member?', isMember);
+    
+    if (!isMember) {
+      console.log('User is not a member of this group');
+      return res.status(403).json({ message: 'You are not a member of this group' });
+    }
+    
     console.log('Group and list found:', group.list._id);
     req.params.id = group.list._id;
     return listController.addItemToListById(req, res);
@@ -102,5 +118,9 @@ router.delete('/:groupId/list/items/:itemId', auth, async (req, res) => {
 router.get('/:groupId/list/summary', auth, groupListController.getGroupListSummary);
 // Complete a group trip (move current list to history, clear list)
 router.post('/:groupId/list/complete-trip', auth, groupListController.completeGroupTrip);
+
+// Trip history endpoints
+router.get('/:groupId/trips', auth, groupListController.getTripHistory);
+router.get('/:groupId/trips/:tripId', auth, groupListController.getTripItems);
 
 module.exports = router;

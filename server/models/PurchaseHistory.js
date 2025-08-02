@@ -23,6 +23,11 @@ const purchaseHistorySchema = new mongoose.Schema({
     ref: 'Group',
     default: null, // null for personal purchases
   },
+  tripId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'TripHistory',
+    default: null, // null for old records or personal purchases
+  },
   boughtAt: {
     type: Date,
     default: Date.now,
@@ -39,6 +44,13 @@ const purchaseHistorySchema = new mongoose.Schema({
   img: {
     type: String,
     default: '',
+  },
+  metadata: {
+    store: {
+      branch: String,
+      address: String,
+      totalPrice: Number,
+    },
   },
 }, { timestamps: true });
 

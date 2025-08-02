@@ -2,7 +2,15 @@
 import socket from './socket';
 
 socket.on('connect', () => {
-  // console.log('✅ socket connected:', socket.id);
+  console.log('✅ Socket connected:', socket.id);
+});
+
+socket.on('joinedGroup', (data) => {
+  console.log('👥 Joined group room:', data);
+});
+
+socket.on('listUpdate', (data) => {
+  console.log('📢 Received listUpdate:', data);
 });
 
 /**
@@ -21,7 +29,10 @@ export function registerGroupUpdates(callback) {
  * @returns {Function} unsubscribe function
  */
 export function registerListUpdates(callback) {
-  socket.on('listUpdate', callback);
+  socket.on('listUpdate', (data) => {
+    console.log('📢 List update received in registerListUpdates:', data);
+    callback(data);
+  });
   return () => socket.off('listUpdate', callback);
 }
 

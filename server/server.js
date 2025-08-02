@@ -109,28 +109,30 @@ const initializeMLModel = async () => {
 
 // Socket.IO event handlers
 io.on('connection', (socket) => {
-  // console.log('Socket connected:', socket.id);
+  console.log('🔌 Socket connected:', socket.id);
 
   // Handle group joining
   socket.on('joinGroup', (groupId) => {
     socket.join(groupId);
-    // console.log(`Socket ${socket.id} joined group: ${groupId}`);
+    console.log(`👥 Socket ${socket.id} joined group: ${groupId}`);
+    // Send confirmation to client
+    socket.emit('joinedGroup', { groupId, socketId: socket.id });
   });
 
   // Handle list joining
   socket.on('joinList', (listId) => {
     socket.join(listId);
-    // console.log(`Socket ${socket.id} joined list: ${listId}`);
+    console.log(`📋 Socket ${socket.id} joined list: ${listId}`);
   });
 
   // Handle list updates
   socket.on('listUpdate', ({ listId }) => {
-    // console.log(`Broadcasting update to list ${listId}`);
-    io.to(listId).emit('listUpdate', { listId });
+    console.log(`📢 Broadcasting update to list ${listId}`);
+    io.to(listId).emit('listUpdate', { listId, timestamp: Date.now() });
   });
 
   socket.on('disconnect', () => {
-    // console.log('Socket disconnected:', socket.id);
+    console.log('🔌 Socket disconnected:', socket.id);
   });
 });
 

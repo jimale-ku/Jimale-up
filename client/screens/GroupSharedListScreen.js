@@ -6,6 +6,7 @@ import productsData from '../assets/products.json';
 import { Swipeable } from 'react-native-gesture-handler';
 import { registerListUpdates, joinRoom } from '../services/socketEvents';
 import { useIsFocused } from '@react-navigation/native';
+import { formatPrice } from '../utils/priceFormatter';
 
 const PLACEHOLDER_IMAGE = 'https://via.placeholder.com/100?text=No+Image';
 const DELETE_MSG_DURATION = 4000;
@@ -17,33 +18,75 @@ const useProductJson = () => {
 
 export default function GroupSharedListScreen({ route, navigation }) {
   const { groupId, currentUserId, groupCreatorId, currentUserName } = route.params || {};
-  const [summary, setSummary] = useState({ currentList: [], lastBought: [], tripCount: 0 });
+  const [summary, setSummary] = useState({ currentList: [], lastBought: [], tripCount: 0, currentTripNumber: 0 });
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('current'); // 'current' or 'lastBought'
+  const [showTripHistory, setShowTripHistory] = useState(false);
+  const [tripHistory, setTripHistory] = useState([]);
+  const [selectedTrip, setSelectedTrip] = useState(null);
   const isFocused = useIsFocused();
   const { loadProducts: loadProductJson } = useProductJson();
   const [deletedMessages, setDeletedMessages] = useState([]); // [{id, text, fadeAnim}]
 
   useEffect(() => {
     if (!groupId) return;
+    
+    console.log('👥 Joining group room:', groupId);
     joinRoom(groupId);
+    
     fetchSummary();
-    const unsubscribe = registerListUpdates(() => {
+    
+    const unsubscribe = registerListUpdates((data) => {
+      console.log('📢 List update received in GroupSharedListScreen:', data);
+      console.log('🔄 Refreshing group list...');
       fetchSummary();
     });
-    return () => unsubscribe && unsubscribe();
+    
+    return () => {
+      console.log('👥 Leaving group room:', groupId);
+      unsubscribe && unsubscribe();
+    };
   }, [groupId, isFocused]);
 
   const fetchSummary = async () => {
     setLoading(true);
     try {
+      console.log('📥 Fetching group list summary for groupId:', groupId);
       const response = await api.get(`/groups/${groupId}/list/summary`);
+      console.log('📥 Received summary data:', {
+        currentListCount: response.data.currentList?.length || 0,
+        lastBoughtCount: response.data.lastBought?.length || 0,
+        tripCount: response.data.tripCount || 0,
+        currentTripNumber: response.data.currentTripNumber || 0
+      });
       setSummary(response.data);
     } catch (err) {
+      console.error('❌ Error fetching group list summary:', err);
       Alert.alert('Error', 'Failed to fetch group list summary');
-      setSummary({ currentList: [], lastBought: [], tripCount: 0 });
+      setSummary({ currentList: [], lastBought: [], tripCount: 0, currentTripNumber: 0 });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchTripHistory = async () => {
+    try {
+      const response = await api.get(`/groups/${groupId}/trips`);
+      setTripHistory(response.data);
+    } catch (err) {
+      console.error('❌ Error fetching trip history:', err);
+      Alert.alert('Error', 'Failed to fetch trip history');
+    }
+  };
+
+  const fetchTripItems = async (tripId) => {
+    try {
+      const response = await api.get(`/groups/${groupId}/trips/${tripId}`);
+      setSelectedTrip(response.data);
+      setShowTripHistory(false);
+    } catch (err) {
+      console.error('❌ Error fetching trip items:', err);
+      Alert.alert('Error', 'Failed to fetch trip items');
     }
   };
 
@@ -124,8 +167,8 @@ export default function GroupSharedListScreen({ route, navigation }) {
     );
   };
 
-  const activeItems = activeTab === 'current' ? summary.currentList : summary.lastBought;
-  const lastStore = summary.lastStore;
+  const activeItems = activeTab === 'current' ? summary.currentList : (selectedTrip ? selectedTrip.items : summary.lastBought);
+  const lastStore = selectedTrip ? selectedTrip.trip.store : summary.lastStore;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#F5F5F5' }}>
@@ -134,20 +177,32 @@ export default function GroupSharedListScreen({ route, navigation }) {
         <View style={styles.tabRow}>
           <TouchableOpacity
             style={[styles.tabCard, activeTab === 'current' && styles.activeTab]}
-            onPress={() => setActiveTab('current')}
+            onPress={() => {
+              setActiveTab('current');
+              setSelectedTrip(null);
+              setShowTripHistory(false);
+            }}
           >
             <Text style={styles.tabTitle}>CURRENT LIST</Text>
             <Text style={styles.tabCount}>{summary.currentList.length}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.tabCard, activeTab === 'lastBought' && styles.activeTab]}
-            onPress={() => setActiveTab('lastBought')}
+            onPress={() => {
+              setActiveTab('lastBought');
+              setSelectedTrip(null);
+              setShowTripHistory(false);
+            }}
           >
             <Text style={styles.tabTitle}>LAST BOUGHT</Text>
-            <Text style={styles.tabCount}>{summary.lastBought.length}</Text>
+            <Text style={styles.tabCount}>
+              {selectedTrip ? selectedTrip.trip.tripNumber : summary.currentTripNumber || 0}
+            </Text>
           </TouchableOpacity>
         </View>
-        <Text style={{ color: '#2E7D32', fontWeight: 'bold', marginBottom: 8, marginTop: 8 }}>Trips completed: {summary.tripCount}</Text>
+        <Text style={{ color: '#2E7D32', fontWeight: 'bold', marginBottom: 8, marginTop: 8 }}>
+          Trips completed: {summary.tripCount}
+        </Text>
       </View>
       <View style={{ flex: 1, paddingHorizontal: 12, paddingTop: 8 }}>
         {loading ? (
@@ -164,20 +219,120 @@ export default function GroupSharedListScreen({ route, navigation }) {
           </View>
         ) : (
           <>
-            {activeTab === 'lastBought' && lastStore && (
-              <View style={{ backgroundColor: '#E3F2FD', borderRadius: 10, padding: 12, marginBottom: 10 }}>
-                <Text style={{ color: '#1976D2', fontWeight: 'bold' }}>Store: {lastStore.branch}</Text>
-                <Text style={{ color: '#1976D2' }}>Address: {lastStore.address}</Text>
-                {lastStore.totalPrice && <Text style={{ color: '#1976D2' }}>Total Price: ₪{lastStore.totalPrice}</Text>}
-              </View>
+            {activeTab === 'lastBought' && (
+              <>
+                {!showTripHistory && !selectedTrip && (
+                  <TouchableOpacity 
+                    style={styles.viewHistoryButton}
+                    onPress={() => {
+                      fetchTripHistory();
+                      setShowTripHistory(true);
+                    }}
+                  >
+                    <Text style={styles.viewHistoryButtonText}>View Trip History</Text>
+                  </TouchableOpacity>
+                )}
+                
+                {showTripHistory && (
+                  <View style={styles.tripHistoryContainer}>
+                    <TouchableOpacity 
+                      style={styles.backButton}
+                      onPress={() => setShowTripHistory(false)}
+                    >
+                      <Text style={styles.backButtonText}>← Back to Current Trip</Text>
+                    </TouchableOpacity>
+                    
+                    <FlatList
+                      data={tripHistory}
+                      renderItem={({ item }) => (
+                        <TouchableOpacity 
+                          style={styles.tripCard}
+                          onPress={() => fetchTripItems(item._id)}
+                        >
+                          <Text style={styles.tripNumber}>Trip {item.tripNumber}</Text>
+                          <Text style={styles.tripDate}>
+                            {new Date(item.completedAt).toLocaleDateString()}
+                          </Text>
+                          <Text style={styles.tripStore}>{item.store?.branch || 'Unknown Store'}</Text>
+                          <Text style={styles.tripItems}>{item.itemCount} items</Text>
+                          {item.totalSpent > 0 && (
+                            <Text style={styles.tripTotal}>{formatPrice(item.totalSpent)}</Text>
+                          )}
+                        </TouchableOpacity>
+                      )}
+                      keyExtractor={(item) => item._id}
+                      numColumns={2}
+                      contentContainerStyle={{ paddingBottom: 60 }}
+                    />
+                  </View>
+                )}
+                
+                {selectedTrip && (
+                  <View style={styles.tripHistoryContainer}>
+                    <TouchableOpacity 
+                      style={styles.backButton}
+                      onPress={() => {
+                        setSelectedTrip(null);
+                        setShowTripHistory(true);
+                      }}
+                    >
+                      <Text style={styles.backButtonText}>← Back to Trip History</Text>
+                    </TouchableOpacity>
+                    
+                    <View style={styles.tripInfo}>
+                      <Text style={styles.tripTitle}>Trip {selectedTrip.trip.tripNumber}</Text>
+                      <Text style={styles.tripDate}>
+                        {new Date(selectedTrip.trip.completedAt).toLocaleDateString()}
+                      </Text>
+                    </View>
+                    
+                    {lastStore && (
+                      <View style={{ backgroundColor: '#E3F2FD', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                        <Text style={{ color: '#1976D2', fontWeight: 'bold' }}>Store: {lastStore.branch}</Text>
+                        <Text style={{ color: '#1976D2' }}>Address: {lastStore.address}</Text>
+                        {lastStore.totalPrice && <Text style={{ color: '#1976D2' }}>Total Price: {formatPrice(lastStore.totalPrice)}</Text>}
+                      </View>
+                    )}
+                    
+                    <FlatList
+                      data={activeItems}
+                      renderItem={renderItemCard}
+                      keyExtractor={(item, idx) => `${item._id || item.id || item.productId || item.product}_${idx}`}
+                      numColumns={1}
+                      contentContainerStyle={{ paddingBottom: 60 }}
+                    />
+                  </View>
+                )}
+                
+                {!showTripHistory && !selectedTrip && lastStore && (
+                  <View style={{ backgroundColor: '#E3F2FD', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                    <Text style={{ color: '#1976D2', fontWeight: 'bold' }}>Store: {lastStore.branch}</Text>
+                    <Text style={{ color: '#1976D2' }}>Address: {lastStore.address}</Text>
+                    {lastStore.totalPrice && <Text style={{ color: '#1976D2' }}>Total Price: {formatPrice(lastStore.totalPrice)}</Text>}
+                  </View>
+                )}
+                
+                {!showTripHistory && !selectedTrip && (
+                  <FlatList
+                    data={activeItems}
+                    renderItem={renderItemCard}
+                    keyExtractor={(item, idx) => `${item._id || item.id || item.productId || item.product}_${idx}`}
+                    numColumns={1}
+                    contentContainerStyle={{ paddingBottom: 60 }}
+                  />
+                )}
+              </>
             )}
-            <FlatList
-              data={activeItems}
-              renderItem={renderItemCard}
-              keyExtractor={(item, idx) => `${item._id || item.id || item.productId || item.product}_${idx}`}
-              numColumns={1}
-              contentContainerStyle={{ paddingBottom: 60 }}
-            />
+            
+            {activeTab === 'current' && (
+              <FlatList
+                data={activeItems}
+                renderItem={renderItemCard}
+                keyExtractor={(item, idx) => `${item._id || item.id || item.productId || item.product}_${idx}`}
+                numColumns={1}
+                contentContainerStyle={{ paddingBottom: 60 }}
+              />
+            )}
           </>
         )}
         {deletedMessages.map(msg => (
@@ -292,6 +447,81 @@ const styles = StyleSheet.create({
     height: 60,
     borderRadius: 8,
     marginRight: 16,
+  },
+  viewHistoryButton: {
+    backgroundColor: '#1976D2',
+    borderRadius: 10,
+    padding: 12,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  viewHistoryButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  tripHistoryContainer: {
+    flex: 1,
+  },
+  backButton: {
+    padding: 12,
+    marginBottom: 16,
+  },
+  backButtonText: {
+    color: '#1976D2',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  tripCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    margin: 6,
+    flex: 1,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  tripNumber: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#2E7D32',
+    marginBottom: 4,
+  },
+  tripDate: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 4,
+  },
+  tripStore: {
+    fontSize: 14,
+    color: '#1976D2',
+    marginBottom: 4,
+  },
+  tripItems: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 4,
+  },
+  tripTotal: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2E7D32',
+  },
+  tripInfo: {
+    backgroundColor: '#E8F5E9',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  tripTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#2E7D32',
+    marginBottom: 4,
   },
   rowContent: {
     flex: 1,

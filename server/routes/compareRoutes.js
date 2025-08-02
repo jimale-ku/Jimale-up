@@ -514,11 +514,8 @@ router.post('/price', async (req, res) => {
         
         // Add price regardless of whether it's real or estimated
         if (productPrice > 0) {
-          allStoreResults[storeKey].totalPrice += productPrice;
-          
           // Only increment itemsFound if this is a new product (not already counted)
           if (!allStoreResults[storeKey].foundBarcodes.includes(prod.barcode)) {
-            allStoreResults[storeKey].itemsFound += 1;
             allStoreResults[storeKey].foundBarcodes.push(prod.barcode);
           }
           
@@ -561,8 +558,6 @@ router.post('/price', async (req, res) => {
       for (const missingProd of missingProducts) {
         const estimatedPrice = await getFallbackPrice(missingProd.name, missingProd.barcode);
         
-        store.totalPrice += estimatedPrice;
-        store.itemsFound += 1;
         store.foundBarcodes.push(missingProd.barcode);
         store.itemPrices[missingProd.barcode] = estimatedPrice;
         store.estimatedPrices[missingProd.barcode] = estimatedPrice;
@@ -578,12 +573,30 @@ router.post('/price', async (req, res) => {
       }
     }
     
+    // Calculate separate totals and counts for real vs estimated prices
+    aggregated.forEach((storeData) => {
+      // Calculate real price total
+      const realPriceTotal = Object.values(storeData.realPrices).reduce((sum, price) => sum + price, 0);
+      const estimatedPriceTotal = Object.values(storeData.estimatedPrices).reduce((sum, price) => sum + price, 0);
+      
+      // Set the counts
+      storeData.realPriceCount = Object.keys(storeData.realPrices).length;
+      storeData.estimatedPriceCount = Object.keys(storeData.estimatedPrices).length;
+      storeData.itemsFound = storeData.realPriceCount; // Only count real prices as "found"
+      storeData.totalPrice = realPriceTotal + estimatedPriceTotal; // Total for display
+      storeData.realPriceTotal = realPriceTotal;
+      storeData.estimatedPriceTotal = estimatedPriceTotal;
+    });
+    
     // Debug: Show what each store contains
     console.log('[DEBUG] ===== STORE CONTENTS =====');
     aggregated.forEach((storeData) => {
       console.log(`[DEBUG] Store: ${storeData.branch}`);
       console.log(`[DEBUG]   - Total Price: ${storeData.totalPrice}`);
-      console.log(`[DEBUG]   - Items Found: ${storeData.itemsFound}`);
+      console.log(`[DEBUG]   - Real Price Total: ${storeData.realPriceTotal}`);
+      console.log(`[DEBUG]   - Estimated Price Total: ${storeData.estimatedPriceTotal}`);
+      console.log(`[DEBUG]   - Real Items Found: ${storeData.realPriceCount}`);
+      console.log(`[DEBUG]   - Estimated Items: ${storeData.estimatedPriceCount}`);
       console.log(`[DEBUG]   - Real Prices:`, storeData.realPrices);
       console.log(`[DEBUG]   - Estimated Prices:`, storeData.estimatedPrices);
       console.log(`[DEBUG]   - All Item Prices:`, storeData.itemPrices);
@@ -608,23 +621,23 @@ router.post('/price', async (req, res) => {
     
     console.log('[DEBUG] All stores have products (real or estimated):', aggregated.length, 'stores');
     
-    // Calculate scores for each store
-    const maxPrice = Math.max(...aggregated.map(s => s.totalPrice), 1);
+    // Calculate scores for each store - only based on real prices
+    const maxRealPrice = Math.max(...aggregated.map(s => s.realPriceTotal), 1);
     const totalItems = products.length;
     
     aggregated.forEach(store => {
-      const availableItems = store.itemsFound;
-      const totalPrice = store.totalPrice;
+      const realItemsFound = store.realPriceCount;
+      const realPriceTotal = store.realPriceTotal;
       
-      // Client's scoring formula
-      const quantityScore = availableItems / totalItems;
-      const priceScore = totalPrice / maxPrice;
+      // Client's scoring formula - only based on real prices
+      const quantityScore = realItemsFound / totalItems;
+      const priceScore = realPriceTotal / maxRealPrice;
       
       const score = (0.7 * quantityScore) - (0.3 * priceScore);
       
       store.score = Math.round(score * 100) / 100; // Round to 2 decimal places
       
-      console.log(`[DEBUG] Store ${store.branch}: Score = ${store.score} (${availableItems}/${totalItems} items, ₪${totalPrice})`);
+      console.log(`[DEBUG] Store ${store.branch}: Score = ${store.score} (${realItemsFound}/${totalItems} real items, ₪${realPriceTotal} real price total)`);
     });
     
     // Sort by score (highest first)

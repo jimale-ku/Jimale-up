@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
+import { registerListUpdates } from '../services/socketEvents';
 
 const { width } = Dimensions.get('window');
 
@@ -90,10 +91,13 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       return;
     }
     try {
+      console.log('🔄 Fetching initial count for group:', groupId);
       const response = await api.get(`/groups/${groupId}/list/items`);
       const items = response.data || [];
+      console.log('📊 Total items in shared list:', items.length);
       setAddedItemsCount(items.length);
     } catch (error) {
+      console.error('❌ Error fetching initial count:', error);
       // Silently handle errors - just set count to 0
       setAddedItemsCount(0);
     }
@@ -125,6 +129,22 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       console.error('Error in fetchInitialCount useEffect:', error);
       setAddedItemsCount(0);
     }
+  }, [groupId]);
+
+  // Listen for real-time list updates to update badge count
+  useEffect(() => {
+    if (!groupId) return;
+    
+    const unsubscribe = registerListUpdates((data) => {
+      console.log('📢 List update received in SmartSuggestionsScreen:', data);
+      console.log('🔄 Refreshing badge count due to list update...');
+      // Refresh the count when list is updated by other users
+      fetchInitialCount();
+    });
+    
+    return () => {
+      unsubscribe && unsubscribe();
+    };
   }, [groupId]);
 
   // Handle search filtering
@@ -504,11 +524,18 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       return;
     }
     
-    // Immediate optimistic updates
+    // Immediate optimistic updates for UI feedback
     setAddingItems(prev => new Set([...prev, itemId]));
-    setAddedItemsCount(prev => prev + 1);
+    // Don't update count optimistically - wait for real update
     
     try {
+      console.log('📤 Adding item to group shared list:', {
+        groupId,
+        itemName: item.name,
+        productId: item.productId || item._id,
+        barcode: item.barcode || ''
+      });
+      
       // Make the API call
       await api.post(`/groups/${groupId}/list/items`, {
         name: item.name,
@@ -516,6 +543,8 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         productId: item.productId || item._id,
         barcode: item.barcode || '',
       });
+      
+      console.log('✅ Item added successfully to group shared list');
       
       // Success - show visual confirmation
       setAddingItems(prev => {
@@ -525,6 +554,9 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       });
       
       setAddedItems(prev => new Set([...prev, itemId]));
+      
+      // Refresh count to get accurate total
+      fetchInitialCount();
       
       // Show success toast
       showToast(`${item.name} added to shared list!`);
@@ -547,7 +579,8 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         newSet.delete(itemId);
         return newSet;
       });
-      setAddedItemsCount(prev => Math.max(0, prev - 1));
+      // Refresh count to get accurate total
+      fetchInitialCount();
       
       showToast('Failed to add item to shared list');
     }

@@ -8,23 +8,51 @@ const { extractFeaturesForProduct } = require('../services/ml/features');
 
 // 🔁 REUSABLE access-check helper
 async function authorizeListAccess(listId, userId) {
+  console.log('🔐 authorizeListAccess called');
+  console.log('listId:', listId);
+  console.log('userId:', userId);
+  
   const list = await List.findById(listId).populate('group');
-  if (
-    !list ||
-    (
-      list.owner.toString() !== userId &&
-      !(list.group && list.group.members.some(m => m.toString() === userId))
-    )
-  ) {
+  console.log('List found:', !!list);
+  
+  if (!list) {
+    console.log('❌ List not found');
     return null;
   }
+  
+  console.log('List owner:', list.owner.toString());
+  console.log('Is user owner?', list.owner.toString() === userId);
+  
+  if (list.group) {
+    console.log('Group members:', list.group.members);
+    // Check if user is in the members array (members are objects with user and role)
+    const isInGroup = list.group.members.some(member => member.user.toString() === userId);
+    console.log('Is user in group?', isInGroup);
+  }
+  
+  if (
+    list.owner.toString() !== userId &&
+    !(list.group && list.group.members.some(member => member.user.toString() === userId))
+  ) {
+    console.log('❌ Access denied - user is not owner or group member');
+    return null;
+  }
+  
+  console.log('✅ Access granted');
   return list;
 }
 
 const emitListUpdate = (req, list) => {
   const groupId = list.group?.toString();
   const roomId = groupId || list.owner.toString();
-  req.app.get('io').to(roomId).emit('listUpdate');
+  console.log(`📢 Emitting listUpdate to room: ${roomId}`);
+  console.log(`📢 Group ID: ${groupId}, List ID: ${list._id}`);
+  req.app.get('io').to(roomId).emit('listUpdate', { 
+    listId: list._id.toString(),
+    groupId: groupId,
+    timestamp: Date.now(),
+    action: 'itemAdded'
+  });
 };
 
 // GET all this user’s lists (owned + shared)

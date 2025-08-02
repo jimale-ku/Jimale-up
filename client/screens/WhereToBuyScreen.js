@@ -19,6 +19,13 @@ const WhereToBuyScreen = ({ route, navigation }) => {
   const [showCelebration, setShowCelebration] = useState(false);
   const { completeTrip } = useContext(PersonalListContext);
 
+  // Hide the default navigation header
+  React.useLayoutEffect(() => {
+    navigation.setOptions({
+      headerShown: false,
+    });
+  }, [navigation]);
+
   // Format price to avoid floating point precision issues
   const formatPrice = (price) => {
     if (price === null || price === undefined || price === 'N/A') {
@@ -214,7 +221,8 @@ const WhereToBuyScreen = ({ route, navigation }) => {
             <Text style={styles.storeName}>{item.branch}</Text>
             <Text style={styles.storeDetail}>כתובת: {item.address}</Text>
             <Text style={styles.storeDetail}>מחיר כולל: ₪{formatPrice(item.totalPrice ?? item.price ?? 'N/A')}</Text>
-            <Text style={styles.storeDetail}>מוצרים שנמצאו: {item.itemsFound}</Text>
+            <Text style={styles.storeDetail}>מוצרים אמיתיים: {item.realPriceCount || 0}</Text>
+            <Text style={styles.storeDetail}>מוצרים משוערים: {item.estimatedPriceCount || 0}</Text>
             <Text style={styles.storeScore}>Score: {item.score || 'N/A'}</Text>
             {item.distance !== null && item.distance !== undefined && (
               <Text style={styles.storeDetail}>מרחק: {item.distance} ק"מ</Text>

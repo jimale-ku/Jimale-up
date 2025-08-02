@@ -158,18 +158,23 @@ export default function MyListScreen({ navigation }) {
                 contentContainerStyle={{ paddingBottom: 60, paddingHorizontal: CARD_MARGIN }}
               />
               <View style={{ alignItems: 'center', marginTop: 24, marginBottom: 16 }}>
-                <TouchableOpacity
-                  style={{
-                    backgroundColor: '#2E7D32',
-                    paddingVertical: 16,
-                    paddingHorizontal: 32,
-                    borderRadius: 8,
-                  }}
-                  onPress={handleComparePrices}
-                  activeOpacity={0.8}
-                >
-                  <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 18 }}>Compare Prices</Text>
-                </TouchableOpacity>
+                <View style={styles.buttonContainer}>
+                  <TouchableOpacity
+                    style={styles.selectItemsButton}
+                    onPress={() => navigation.navigate('Main')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.buttonText}>Select Items</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity
+                    style={styles.compareButton}
+                    onPress={handleComparePrices}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.buttonText}>Compare</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </>
           )
@@ -290,5 +295,31 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: '#1976D2',
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+    marginTop: 10,
+  },
+  selectItemsButton: {
+    backgroundColor: '#2E7D32',
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 8,
+    width: '45%', // Adjust as needed
+  },
+  compareButton: {
+    backgroundColor: '#1976D2',
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 8,
+    width: '45%', // Adjust as needed
+  },
+  buttonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 18,
+    textAlign: 'center',
   },
 });
