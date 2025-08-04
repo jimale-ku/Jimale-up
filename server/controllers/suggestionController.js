@@ -57,14 +57,28 @@ exports.getSmartSuggestions = async (req, res) => {
 
     let suggestions = [];
 
-    // Get products from products.json
-    const allProducts = getProductsFromJson();
-    
     if (type === 'all') {
-      // Return random products for ALL card (legacy: include name/img)
-      const shuffled = allProducts.sort(() => Math.random() - 0.5);
-      suggestions = shuffled.slice(0, limitNum).map(product => ({
-        productId: product._id || product.productId,
+      // Use MongoDB instead of old products.json for ALL card
+      console.log('🔄 ALL card: Fetching from MongoDB...');
+      const products = await Product.aggregate([
+        { $sample: { size: limitNum } },
+        { $project: {
+            _id: 1,
+            name: 1,
+            img: 1,
+            barcode: 1
+        }}
+      ]);
+      
+      console.log(`📦 ALL card: Found ${products.length} products from MongoDB`);
+      console.log('🔍 ALL card sample products:', products.slice(0, 3).map(p => ({ 
+        name: p.name, 
+        hasImage: !!p.img, 
+        imageType: p.img ? p.img.substring(0, 30) : 'none' 
+      })));
+      
+      suggestions = products.map(product => ({
+        productId: product._id,
         name: product.name || 'Unknown Product',
         img: getValidImage(product.img),
         barcode: product.barcode || '',
@@ -96,17 +110,16 @@ exports.getSmartSuggestions = async (req, res) => {
             boughtAt: lastBoughtAt 
           }).sort({ createdAt: -1 });
           
-          // Map to product details from allProducts (from DB)
+          // Map to product details from MongoDB
+          const productIds = lastTripItems.map(item => item.product).filter(Boolean);
+          const products = await Product.find({ _id: { $in: productIds } }).select('name img barcode').lean();
+          const productMap = new Map(products.map(p => [p._id.toString(), p]));
+          
           suggestions = lastTripItems.map(item => {
-            const product = allProducts.find(p => (
-              p._id === item.product ||
-              p.productId === item.product ||
-              p.id === item.product ||
-              p.name === item.name // Fallback by name
-            ));
+            const product = productMap.get(item.product?.toString());
             return product && getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100'
               ? {
-                  productId: item.product || product._id || product.productId,
+                  productId: item.product || product._id,
                   name: item.name || product?.name || 'Unknown Product',
                   img: getValidImage(product?.img) || item.img || '',
                   barcode: product?.barcode || '',
@@ -123,16 +136,22 @@ exports.getSmartSuggestions = async (req, res) => {
       const Group = require('../models/Group');
       const group = await Group.findById(groupId);
       if (!group) {
-          // Fallback: random products from products.json
-          const shuffled = allProducts
-            .filter(product => getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100')
-            .sort(() => Math.random() - 0.5);
-          suggestions = shuffled.slice(0, 15).map(product => ({
-            productId: product._id || product.productId || product.id,
+          // Fallback: random products from MongoDB
+          const products = await Product.aggregate([
+            { $sample: { size: 15 } },
+            { $project: {
+                _id: 1,
+                name: 1,
+                img: 1,
+                barcode: 1
+            }}
+          ]);
+          suggestions = products.map(product => ({
+            productId: product._id,
             name: product.name || 'Unknown Product',
             img: getValidImage(product.img),
             barcode: product.barcode || '',
-          type: 'favorite'
+            type: 'favorite'
           }));
         } else {
         const memberIds = group.members.map(m => m.user.toString());
@@ -143,13 +162,12 @@ exports.getSmartSuggestions = async (req, res) => {
         }).lean();
         // Get unique productIds
         const uniqueProductIds = [...new Set(groupFavorites.map(fav => fav.productId))];
-        // Map to product details from products.json
+        // Map to product details from MongoDB
+        const products = await Product.find({ _id: { $in: uniqueProductIds } }).select('name img barcode').lean();
+        const productMap = new Map(products.map(p => [p._id.toString(), p]));
+        
         suggestions = uniqueProductIds.map(pid => {
-            const product = allProducts.find(p => (
-            p._id === pid ||
-            p.productId === pid ||
-            p.id === pid
-            ));
+            const product = productMap.get(pid);
             return product && getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100'
               ? {
                 productId: pid,
@@ -333,17 +351,14 @@ async function getHouseholdFrequentProducts(groupId, limit) {
       return fallback;
     }
 
-    // SIMPLE FIX: Use products.json directly for guaranteed images
-    const fs = require('fs');
-    const path = require('path');
-    const productsPath = path.resolve(__dirname, '../scripts/products.json');
-    const data = fs.readFileSync(productsPath, 'utf-8');
-    const allProducts = JSON.parse(data);
+    // Get product details from MongoDB instead of old products.json
+    const productIds = frequentByTimes.map(item => item._id);
+    const products = await Product.find({ _id: { $in: productIds } }).select('name img').lean();
+    const productMap = new Map(products.map(p => [p._id.toString(), p]));
 
     // ULTRA FAST: Simple mapping with SmartCart-style data
     const results = frequentByTimes.map(item => {
-      // Find product in products.json by ID or name
-      const prod = allProducts.find(p => p._id === item._id || p.name === item._id);
+      const prod = productMap.get(item._id.toString());
       
       return {
         productId: item._id,
@@ -381,22 +396,10 @@ async function getAllProducts(limit = 20) {
       }}
     ]);
     
-    // If MongoDB is empty, fallback to products.json
+    // Return empty array if no products found (no fallback to old file)
     if (!products.length) {
-      const fs = require('fs');
-      const path = require('path');
-      const productsPath = path.resolve(__dirname, '../scripts/products.json');
-      const data = fs.readFileSync(productsPath, 'utf-8');
-      const allProducts = JSON.parse(data);
-      
-      return allProducts.slice(0, limit).map(product => ({
-        productId: product._id || product.productId,
-        name: product.name || 'Unknown Product',
-        img: getValidImage(product.img),
-        type: 'all',
-        score: 1,
-        frequency: 1
-      }));
+      console.log('⚠️ No products found in MongoDB for ALL card');
+      return [];
     }
     
     return products.map(product => ({
@@ -408,25 +411,9 @@ async function getAllProducts(limit = 20) {
       frequency: 1
     }));
   } catch (error) {
-    // Fallback to products.json on any error
-    try {
-      const fs = require('fs');
-      const path = require('path');
-      const productsPath = path.resolve(__dirname, '../scripts/products.json');
-      const data = fs.readFileSync(productsPath, 'utf-8');
-      const allProducts = JSON.parse(data);
-      
-      return allProducts.slice(0, limit).map(product => ({
-        productId: product._id || product.productId,
-        name: product.name || 'Unknown Product',
-        img: getValidImage(product.img),
-        type: 'all',
-        score: 1,
-        frequency: 1
-      }));
-    } catch (fallbackError) {
-      return [];
-    }
+    console.error('❌ Error getting all products from MongoDB:', error);
+    // Return empty array instead of falling back to old file
+    return [];
   }
 }
 
@@ -573,24 +560,10 @@ async function getRandomProducts(limit) {
       }}
     ]);
     
-    // If MongoDB is empty, fallback to products.json
+    // Return empty array if no products found (no fallback to old file)
     if (!products.length) {
-      const fs = require('fs');
-      const path = require('path');
-      const productsPath = path.resolve(__dirname, '../scripts/products.json');
-      const data = fs.readFileSync(productsPath, 'utf-8');
-      const allProducts = JSON.parse(data);
-      
-      // Shuffle and take random products
-      const shuffled = allProducts.sort(() => Math.random() - 0.5);
-      return shuffled.slice(0, limit).map(product => ({
-        productId: product._id || product.productId,
-        name: product.name || 'Unknown Product',
-        img: getValidImage(product.img),
-        type: 'all',
-        score: 1,
-        frequency: 1
-      }));
+      console.log('⚠️ No products found in MongoDB for random products');
+      return [];
     }
     
     return products.map(product => ({
@@ -602,28 +575,9 @@ async function getRandomProducts(limit) {
       frequency: 1
     }));
   } catch (error) {
-    console.error('Error getting random products:', error);
-    // Fallback to products.json on any error
-    try {
-      const fs = require('fs');
-      const path = require('path');
-      const productsPath = path.resolve(__dirname, '../scripts/products.json');
-      const data = fs.readFileSync(productsPath, 'utf-8');
-      const allProducts = JSON.parse(data);
-      
-      // Shuffle and take random products
-      const shuffled = allProducts.sort(() => Math.random() - 0.5);
-      return shuffled.slice(0, limit).map(product => ({
-        productId: product._id || product.productId,
-        name: product.name || 'Unknown Product',
-        img: getValidImage(product.img),
-        type: 'all',
-        score: 1,
-        frequency: 1
-      }));
-    } catch (fallbackError) {
-      return [];
-    }
+    console.error('❌ Error getting random products from MongoDB:', error);
+    // Return empty array instead of falling back to old file
+    return [];
   }
 }
 
@@ -987,17 +941,14 @@ async function getGroupRecentlyAddedProducts(groupId, limit) {
       return fallback;
     }
 
-    // SIMPLE FIX: Use products.json directly for guaranteed images
-    const fs = require('fs');
-    const path = require('path');
-    const productsPath = path.resolve(__dirname, '../scripts/products.json');
-    const data = fs.readFileSync(productsPath, 'utf-8');
-    const allProducts = JSON.parse(data);
+    // Get product details from MongoDB instead of old products.json
+    const productIds = recentPurchases.map(r => r._id);
+    const products = await Product.find({ _id: { $in: productIds } }).select('name img').lean();
+    const productMap = new Map(products.map(p => [p._id.toString(), p]));
 
     // FAST: Return simple results immediately
     const results = recentPurchases.map(r => {
-      // Find product in products.json by ID or name
-      const prod = allProducts.find(p => p._id === r._id || p.name === r._id);
+      const prod = productMap.get(r._id.toString());
       return {
         productId: r._id,
         name: prod?.name || 'Unknown Product',
@@ -1053,17 +1004,13 @@ async function getGroupFavoriteProducts(groupId, limit) {
     // ULTRA FAST: Get unique product IDs
     const productIds = [...new Set(recentInteractions.map(r => r.productId.toString()))].slice(0, limit);
     
-    // SIMPLE FIX: Use products.json directly for guaranteed images
-    const fs = require('fs');
-    const path = require('path');
-    const productsPath = path.resolve(__dirname, '../scripts/products.json');
-    const data = fs.readFileSync(productsPath, 'utf-8');
-    const allProducts = JSON.parse(data);
+    // Get product details from MongoDB instead of old products.json
+    const products = await Product.find({ _id: { $in: productIds } }).select('name img').lean();
+    const productMap = new Map(products.map(p => [p._id.toString(), p]));
 
     // ULTRA FAST: Simple mapping with minimal processing
     const results = productIds.map(productId => {
-      // Find product in products.json by ID or name
-      const prod = allProducts.find(p => p._id === productId || p.name === productId);
+      const prod = productMap.get(productId);
       const interactions = recentInteractions.filter(r => r.productId.toString() === productId);
       
       return {
@@ -1088,4 +1035,10 @@ async function getGroupFavoriteProducts(groupId, limit) {
     console.error('[favorite] Error:', error.message);
     return await getRandomProducts(limit);
   }
-} 
+}
+
+// Export getValidImage function for use in other modules
+module.exports = {
+  getSmartSuggestions: exports.getSmartSuggestions,
+  getValidImage
+}; 

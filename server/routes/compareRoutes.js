@@ -291,76 +291,11 @@ async function searchProductWithFallback(city, product) {
     }
   }
   
-  // If still no results, use fallback
-  if (!prodResults || prodResults.length === 0) {
-    console.log(`[DEBUG] No scraping results, using fallback for ${product.name}`);
-    const fallbackPrice = await getFallbackPrice(product.name, product.barcode);
-    
-    // Create a fallback result with estimated price
-    prodResults = [{
-      branch: 'מחיר משוער',
-      address: 'לא זמין באזור זה',
-      totalPrice: fallbackPrice.toFixed(2),
-      itemsFound: 1,
-      itemPrices: { [product.barcode]: fallbackPrice },
-      isFallback: true // Flag to indicate this is estimated
-    }];
-  }
-  
-  return prodResults;
+  // Return results (no fallback - only real prices)
+  return prodResults || [];
 }
 
-// Enhanced fallback price estimation with better categorization
-async function getFallbackPrice(productName, barcode) {
-  // Enhanced category estimates with more realistic price ranges
-  const categoryEstimates = {
-    'bread': { min: 8, max: 18, avg: 12 },
-    'milk': { min: 5, max: 15, avg: 9 },
-    'cheese': { min: 12, max: 45, avg: 25 },
-    'meat': { min: 25, max: 120, avg: 60 },
-    'vegetables': { min: 3, max: 20, avg: 8 },
-    'fruits': { min: 5, max: 35, avg: 15 },
-    'cereal': { min: 10, max: 30, avg: 18 },
-    'snacks': { min: 6, max: 25, avg: 12 },
-    'beverages': { min: 4, max: 20, avg: 10 },
-    'cleaning': { min: 8, max: 35, avg: 18 },
-    'personal_care': { min: 6, max: 30, avg: 15 },
-    'wine': { min: 25, max: 80, avg: 45 },
-    'chips': { min: 2, max: 8, avg: 4 },
-    'juice': { min: 8, max: 25, avg: 15 },
-    'general': { min: 8, max: 25, avg: 15 }
-  };
-  
-  // Enhanced keyword matching for better category detection
-  const name = (productName || '').toLowerCase();
-  let category = 'general';
-  
-  // More specific category detection
-  if (name.includes('לחם') || name.includes('bread') || name.includes('בייגל')) category = 'bread';
-  else if (name.includes('חלב') || name.includes('milk') || name.includes('יוגורט')) category = 'milk';
-  else if (name.includes('גבינה') || name.includes('cheese') || name.includes('קוטג')) category = 'cheese';
-  else if (name.includes('בשר') || name.includes('meat') || name.includes('עוף') || name.includes('דג')) category = 'meat';
-  else if (name.includes('ירקות') || name.includes('vegetables') || name.includes('עגבניה') || name.includes('מלפפון')) category = 'vegetables';
-  else if (name.includes('פירות') || name.includes('fruits') || name.includes('תפוח') || name.includes('בננה')) category = 'fruits';
-  else if (name.includes('דגנים') || name.includes('cereal') || name.includes('קורנפלקס')) category = 'cereal';
-  else if (name.includes('חטיף') || name.includes('snack') || name.includes('ביסלי') || name.includes('קראנצ')) category = 'snacks';
-  else if (name.includes('משקה') || name.includes('drink') || name.includes('קולה') || name.includes('ספרייט')) category = 'beverages';
-  else if (name.includes('ניקוי') || name.includes('cleaning') || name.includes('אקונומיקה') || name.includes('סבון')) category = 'cleaning';
-  else if (name.includes('טיפוח') || name.includes('care') || name.includes('שמפו') || name.includes('משחת')) category = 'personal_care';
-  else if (name.includes('יין') || name.includes('wine') || name.includes('סוביניון') || name.includes('קברנה')) category = 'wine';
-  else if (name.includes('ציפס') || name.includes('chips') || name.includes('קראנצ')) category = 'chips';
-  else if (name.includes('מיץ') || name.includes('juice') || name.includes('ויטמינצ')) category = 'juice';
-  
-  const estimate = categoryEstimates[category] || categoryEstimates.general;
-  
-  // Use average price with small random variation (±15%)
-  const variation = 0.85 + (Math.random() * 0.3); // 0.85 to 1.15
-  const estimatedPrice = Math.round(estimate.avg * variation * 10) / 10;
-  
-  console.log(`[DEBUG] Fallback price for ${productName}: ${estimatedPrice} ILS (category: ${category}, avg: ${estimate.avg})`);
-  
-  return estimatedPrice;
-}
+
 
 function calculateProductTotal(quantity, regularPrice, salePrice, requiredQuantity) {
   if (!salePrice || !requiredQuantity || quantity < requiredQuantity) {
@@ -498,9 +433,7 @@ router.post('/price', async (req, res) => {
             itemsFound: 0, 
             foundBarcodes: [],
             itemPrices: {},
-            productDetails: {},
-            estimatedPrices: {}, // Track which prices are estimated
-            realPrices: {} // Track which prices are real
+            productDetails: {}
           };
         } else {
           // Add this address to the list if it's not already there
@@ -509,10 +442,9 @@ router.post('/price', async (req, res) => {
           }
         }
         
-        // Add this product's price to the store
+        // Add this product's price to the store (only real prices)
         const productPrice = storeData.itemPrices[prod.barcode] || 0;
         
-        // Add price regardless of whether it's real or estimated
         if (productPrice > 0) {
           // Only increment itemsFound if this is a new product (not already counted)
           if (!allStoreResults[storeKey].foundBarcodes.includes(prod.barcode)) {
@@ -522,70 +454,32 @@ router.post('/price', async (req, res) => {
           // Store individual item price
           allStoreResults[storeKey].itemPrices[prod.barcode] = productPrice;
           
-          // Track whether this is a real or estimated price
-          if (storeData.isFallback) {
-            allStoreResults[storeKey].estimatedPrices[prod.barcode] = productPrice;
-            console.log(`[DEBUG] Store ${storeKey}: Added ESTIMATED price for ${prod.name} - ₪${productPrice}`);
-          } else {
-            allStoreResults[storeKey].realPrices[prod.barcode] = productPrice;
-            console.log(`[DEBUG] Store ${storeKey}: Added REAL price for ${prod.name} - ₪${productPrice}`);
-          }
-          
           // Store product details including image
           allStoreResults[storeKey].productDetails[prod.barcode] = {
             name: prod.name,
             img: prod.img,
-            price: productPrice,
-            isEstimated: storeData.isFallback || false
+            price: productPrice
           };
+          
+          console.log(`[DEBUG] Store ${storeKey}: Added REAL price for ${prod.name} - ₪${productPrice}`);
         } else {
           console.log(`[DEBUG] Store ${storeKey}: No price found for ${prod.name} (barcode: ${prod.barcode})`);
         }
       }
     }
     
-    // Convert to array and add missing products with estimated prices
+    // Convert to array - only real prices
     let aggregated = Object.values(allStoreResults);
     
     console.log('[DEBUG] ===== AGGREGATION SUMMARY =====');
     console.log('[DEBUG] Total stores found:', aggregated.length);
     console.log('[DEBUG] Store keys:', Object.keys(allStoreResults));
     
-    // Add estimated prices for products not found in any store
-    for (const store of aggregated) {
-      const missingProducts = products.filter(p => !store.foundBarcodes.includes(p.barcode));
-      
-      for (const missingProd of missingProducts) {
-        const estimatedPrice = await getFallbackPrice(missingProd.name, missingProd.barcode);
-        
-        store.foundBarcodes.push(missingProd.barcode);
-        store.itemPrices[missingProd.barcode] = estimatedPrice;
-        store.estimatedPrices[missingProd.barcode] = estimatedPrice;
-        
-        store.productDetails[missingProd.barcode] = {
-          name: missingProd.name,
-          img: missingProd.img,
-          price: estimatedPrice,
-          isEstimated: true
-        };
-        
-        console.log(`[DEBUG] Store ${store.branch}: Added MISSING product ${missingProd.name} with estimated price ₪${estimatedPrice}`);
-      }
-    }
-    
-    // Calculate separate totals and counts for real vs estimated prices
+    // Calculate totals for real prices only
     aggregated.forEach((storeData) => {
-      // Calculate real price total
-      const realPriceTotal = Object.values(storeData.realPrices).reduce((sum, price) => sum + price, 0);
-      const estimatedPriceTotal = Object.values(storeData.estimatedPrices).reduce((sum, price) => sum + price, 0);
-      
-      // Set the counts
-      storeData.realPriceCount = Object.keys(storeData.realPrices).length;
-      storeData.estimatedPriceCount = Object.keys(storeData.estimatedPrices).length;
-      storeData.itemsFound = storeData.realPriceCount; // Only count real prices as "found"
-      storeData.totalPrice = realPriceTotal + estimatedPriceTotal; // Total for display
-      storeData.realPriceTotal = realPriceTotal;
-      storeData.estimatedPriceTotal = estimatedPriceTotal;
+      const totalPrice = Object.values(storeData.itemPrices).reduce((sum, price) => sum + price, 0);
+      storeData.totalPrice = totalPrice;
+      storeData.itemsFound = storeData.foundBarcodes.length;
     });
     
     // Debug: Show what each store contains
@@ -593,23 +487,15 @@ router.post('/price', async (req, res) => {
     aggregated.forEach((storeData) => {
       console.log(`[DEBUG] Store: ${storeData.branch}`);
       console.log(`[DEBUG]   - Total Price: ${storeData.totalPrice}`);
-      console.log(`[DEBUG]   - Real Price Total: ${storeData.realPriceTotal}`);
-      console.log(`[DEBUG]   - Estimated Price Total: ${storeData.estimatedPriceTotal}`);
-      console.log(`[DEBUG]   - Real Items Found: ${storeData.realPriceCount}`);
-      console.log(`[DEBUG]   - Estimated Items: ${storeData.estimatedPriceCount}`);
-      console.log(`[DEBUG]   - Real Prices:`, storeData.realPrices);
-      console.log(`[DEBUG]   - Estimated Prices:`, storeData.estimatedPrices);
-      console.log(`[DEBUG]   - All Item Prices:`, storeData.itemPrices);
+      console.log(`[DEBUG]   - Items Found: ${storeData.itemsFound}`);
+      console.log(`[DEBUG]   - Item Prices:`, storeData.itemPrices);
     });
     
     console.log('[DEBUG] Final aggregated results:', aggregated.map(s => ({
       store: s.branch,
       totalPrice: s.totalPrice,
       itemsFound: s.itemsFound,
-      score: s.score,
-      itemPrices: s.itemPrices,
-      realPrices: s.realPrices,
-      estimatedPrices: s.estimatedPrices
+      itemPrices: s.itemPrices
     })));
     
     if (aggregated.length === 0) {
@@ -619,25 +505,25 @@ router.post('/price', async (req, res) => {
       });
     }
     
-    console.log('[DEBUG] All stores have products (real or estimated):', aggregated.length, 'stores');
+    console.log('[DEBUG] All stores have real products:', aggregated.length, 'stores');
     
-    // Calculate scores for each store - only based on real prices
-    const maxRealPrice = Math.max(...aggregated.map(s => s.realPriceTotal), 1);
+    // Calculate scores for each store - based on real prices only
+    const maxPrice = Math.max(...aggregated.map(s => s.totalPrice), 1);
     const totalItems = products.length;
     
     aggregated.forEach(store => {
-      const realItemsFound = store.realPriceCount;
-      const realPriceTotal = store.realPriceTotal;
+      const itemsFound = store.itemsFound;
+      const totalPrice = store.totalPrice;
       
-      // Client's scoring formula - only based on real prices
-      const quantityScore = realItemsFound / totalItems;
-      const priceScore = realPriceTotal / maxRealPrice;
+      // Client's scoring formula - based on real prices only
+      const quantityScore = itemsFound / totalItems;
+      const priceScore = totalPrice / maxPrice;
       
       const score = (0.7 * quantityScore) - (0.3 * priceScore);
       
       store.score = Math.round(score * 100) / 100; // Round to 2 decimal places
       
-      console.log(`[DEBUG] Store ${store.branch}: Score = ${store.score} (${realItemsFound}/${totalItems} real items, ₪${realPriceTotal} real price total)`);
+      console.log(`[DEBUG] Store ${store.branch}: Score = ${store.score} (${itemsFound}/${totalItems} items, ₪${totalPrice} total)`);
     });
     
     // Sort by score (highest first)

@@ -174,16 +174,23 @@ export default function MainScreen({ navigation }) {
     try {
       const res = await api.get(`/products?limit=50&offset=${reset ? 0 : offset}`);
       const products = res.data || [];
+      
+      // Filter to only show products with valid images (same as ALL card)
+      const validProducts = products.filter(product => {
+        const img = product.img || product.image;
+        return img && img !== '' && img !== 'https://via.placeholder.com/100' && img !== 'null';
+      });
+      
       if (reset) {
-        setProducts(products);
-        setFilteredProducts(products);
+        setProducts(validProducts);
+        setFilteredProducts(validProducts);
         setOffset(50);
-        setHasMore(products.length === 50);
+        setHasMore(validProducts.length === 50);
       } else {
-        setProducts(prev => [...prev, ...products]);
-        setFilteredProducts(prev => [...prev, ...products]);
+        setProducts(prev => [...prev, ...validProducts]);
+        setFilteredProducts(prev => [...prev, ...validProducts]);
         setOffset(prev => prev + 50);
-        setHasMore(products.length === 50);
+        setHasMore(validProducts.length === 50);
       }
     } catch (err) {
       setHasMore(false);

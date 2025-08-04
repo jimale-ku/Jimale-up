@@ -220,7 +220,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
           <View style={styles.storeInfo}>
             <Text style={styles.storeName}>{item.branch}</Text>
             <Text style={styles.storeDetail}>כתובת: {item.address}</Text>
-            <Text style={styles.storeDetail}>מחיר כולל: ₪{formatPrice(item.totalPrice ?? item.price ?? 'N/A')}</Text>
+            <Text style={styles.storeDetail}>מחיר אמיתי: ₪{formatPrice(item.totalPrice ?? item.price ?? 'N/A')}</Text>
             <Text style={styles.storeDetail}>מוצרים אמיתיים: {item.realPriceCount || 0}</Text>
             <Text style={styles.storeDetail}>מוצרים משוערים: {item.estimatedPriceCount || 0}</Text>
             <Text style={styles.storeScore}>Score: {item.score || 'N/A'}</Text>

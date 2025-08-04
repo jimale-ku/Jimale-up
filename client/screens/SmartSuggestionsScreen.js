@@ -72,6 +72,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
   // Add loading states for individual items
   const [addingItems, setAddingItems] = useState(new Set());
   const [addedItems, setAddedItems] = useState(new Set());
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
 
   const groupId = route?.params?.groupId || null;
 
@@ -147,12 +148,21 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
     };
   }, [groupId]);
 
-  // Handle search filtering
+  // Debounce search term to avoid searching on every character
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 500); // Wait 500ms after user stops typing
+
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  // Handle search filtering with debounced search term
   useEffect(() => {
     if (selectedMainTab === 'all') {
-      if (searchTerm.trim()) {
+      if (debouncedSearchTerm.trim()) {
         // Search the database directly instead of filtering loaded items
-        searchProducts(searchTerm);
+        searchProducts(debouncedSearchTerm);
       } else {
         // Reset to normal pagination when search is cleared
         setFilteredSuggestions([]);
@@ -163,7 +173,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         fetchSmartSuggestions('all', 0, true);
       }
     }
-  }, [searchTerm, selectedMainTab]);
+  }, [debouncedSearchTerm, selectedMainTab]);
 
   // New function to search products directly from database
   const searchProducts = async (searchQuery) => {

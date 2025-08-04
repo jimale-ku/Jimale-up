@@ -37,7 +37,7 @@ const StoreDetailScreen = ({ route, navigation }) => {
   const estimatedPriceCount = store.estimatedPriceCount || Object.keys(estimatedPrices).length;
   const realPriceTotal = store.realPriceTotal || Object.values(realPrices).reduce((sum, price) => sum + price, 0);
   const estimatedPriceTotal = store.estimatedPriceTotal || Object.values(estimatedPrices).reduce((sum, price) => sum + price, 0);
-  const totalPrice = store.totalPrice || (realPriceTotal + estimatedPriceTotal);
+  const totalPrice = store.totalPrice || realPriceTotal; // Only real prices for total
 
   const handleBuy = async () => {
     console.log('Buy button pressed', { tripType, store });
@@ -124,7 +124,7 @@ const StoreDetailScreen = ({ route, navigation }) => {
           <View style={styles.storeDetails}>
             <Text style={styles.storeName}>{store.branch}</Text>
             <Text style={styles.storeAddress}>{store.address}</Text>
-            <Text style={styles.storeTotal}>מחיר כולל: ₪{store.totalPrice || 'N/A'}</Text>
+            <Text style={styles.storeTotal}>מחיר אמיתי: ₪{store.totalPrice || 'N/A'}</Text>
             {store.distance !== null && store.distance !== undefined && (
               <Text style={styles.storeDistance}>מרחק: {store.distance} ק"מ</Text>
             )}
@@ -144,15 +144,10 @@ const StoreDetailScreen = ({ route, navigation }) => {
               {allProducts.map(product => renderItemCard(product))}
             </ScrollView>
             <View style={styles.totalSection}>
-              <Text style={styles.totalText}>סה"כ: ₪{totalPrice.toFixed(2)}</Text>
-              {realPriceTotal > 0 && (
-                <Text style={styles.realTotalText}>
-                  מחירים אמיתיים: ₪{realPriceTotal.toFixed(2)}
-                </Text>
-              )}
+              <Text style={styles.totalText}>סה"כ מחירים אמיתיים: ₪{totalPrice.toFixed(2)}</Text>
               {estimatedPriceTotal > 0 && (
                 <Text style={styles.estimatedTotalText}>
-                  מחירים משוערים: ₪{estimatedPriceTotal.toFixed(2)}
+                  מחירים משוערים נוספים: ₪{estimatedPriceTotal.toFixed(2)}
                 </Text>
               )}
             </View>
