@@ -58,14 +58,25 @@ exports.createGroup = async (req, res) => {
   }
 };
 
-// GET /groups/my
+// GET /groups/my - OPTIMIZED for performance
 exports.getMyGroups = async (req, res) => {
   try {
-    // Find groups where user is a member
+    // OPTIMIZED: Reduced populate depth and added lean() for better performance
     const groups = await Group.find({ 'members.user': req.userId })
       .populate('members.user', 'username profilePicUrl')
       .populate('waitingList', 'username profilePicUrl')
-      .populate({ path: 'list', populate: { path: 'items' } });
+      .populate({ 
+        path: 'list', 
+        select: 'name items',
+        populate: { 
+          path: 'items',
+          select: 'name quantity addedBy',
+          populate: { path: 'addedBy', select: 'username' }
+        }
+      })
+      .lean(); // Use lean() for better performance
+      
+    console.log(`👥 Groups API: ${groups.length} groups returned for user ${req.userId}`);
     res.json(groups);
   } catch (err) {
     console.error('Error fetching groups:', err);

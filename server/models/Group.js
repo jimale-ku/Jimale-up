@@ -13,4 +13,9 @@ const groupSchema = new mongoose.Schema({
   list: { type: mongoose.Schema.Types.ObjectId, ref: 'List', default: null },
 }, { timestamps: true });
 
+// Performance optimization: Add indexes for frequently queried fields
+groupSchema.index({ 'members.user': 1 }); // For finding user's groups
+groupSchema.index({ name: 1 }); // For group name searches
+groupSchema.index({ createdAt: -1 }); // For recent groups
+
 module.exports = mongoose.model('Group', groupSchema);

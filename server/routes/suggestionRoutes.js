@@ -49,7 +49,7 @@ router.post('/favorites/remove', (req, res, next) => {
 
 router.get('/favorites/check/:productId', (req, res, next) => {
   console.log('GET /suggestions/favorites/check called with params:', req.params);
-  favoriteController.checkFavorite(req, res, next);
+  suggestionController.checkFavoriteStatus(req, res, next);
 });
 
 // ML Model Management (admin endpoints)

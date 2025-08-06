@@ -4,10 +4,11 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web"
+    "start": "expo start --quiet",
+    "start:verbose": "expo start",
+    "android": "expo start --android --quiet",
+    "ios": "expo start --ios --quiet",
+    "web": "expo start --web --quiet"
   },
   "dependencies": {
     "@expo-google-fonts/playfair-display": "^0.2.3",

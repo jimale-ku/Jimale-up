@@ -8,7 +8,7 @@ async function testSmartSuggestions() {
     // Test without authentication (should fail)
     console.log('\n1. Testing without authentication:');
     try {
-      const response = await axios.get('http://localhost:5000/api/suggestions/smart');
+      const response = await axios.get('http://192.168.0.102:5000/api/suggestions/smart');
       console.log('✅ Success without auth:', response.data);
     } catch (error) {
       console.log('❌ Expected failure without auth:', error.response?.status, error.response?.data?.message);
@@ -17,7 +17,7 @@ async function testSmartSuggestions() {
     // Test with invalid token
     console.log('\n2. Testing with invalid token:');
     try {
-      const response = await axios.get('http://localhost:5000/api/suggestions/smart', {
+      const response = await axios.get('http://192.168.0.102:5000/api/suggestions/smart', {
         headers: { Authorization: 'Bearer invalid-token' }
       });
       console.log('✅ Success with invalid token:', response.data);
@@ -28,7 +28,7 @@ async function testSmartSuggestions() {
     // Test basic server connectivity
     console.log('\n3. Testing basic server connectivity:');
     try {
-      const response = await axios.get('http://localhost:5000/');
+      const response = await axios.get('http://192.168.0.102:5000/');
       console.log('✅ Server is running:', response.data);
     } catch (error) {
       console.log('❌ Server not accessible:', error.message);

@@ -66,7 +66,6 @@ function getFromCache(city, searchTerm) {
   const key = getCacheKey(city, searchTerm);
   const cached = priceCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    console.log(`[CACHE] Hit for ${searchTerm} in ${city}`);
     return cached.data;
   }
   return null;
@@ -78,7 +77,6 @@ function setCache(city, searchTerm, data) {
     data,
     timestamp: Date.now()
   });
-  console.log(`[CACHE] Set for ${searchTerm} in ${city}`);
 }
 
 // Clean old cache entries periodically
@@ -94,8 +92,6 @@ setInterval(() => {
 async function fetchWithRetry(url, params, headers, maxRetries = 2) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`[DEBUG] Attempt ${attempt}/${maxRetries} for URL:`, url);
-      
       const response = await axios.get(url, { 
         params, 
         headers,
@@ -104,7 +100,7 @@ async function fetchWithRetry(url, params, headers, maxRetries = 2) {
       
       return response;
     } catch (error) {
-      console.error(`[DEBUG] Attempt ${attempt} failed:`, error.message);
+      console.error(`Request failed (attempt ${attempt}/${maxRetries}):`, error.message);
       
       if (attempt === maxRetries) {
         throw error;
@@ -112,7 +108,6 @@ async function fetchWithRetry(url, params, headers, maxRetries = 2) {
       
       // Reduced delay between retries
       const delay = Math.pow(1.5, attempt) * 500; // 750ms, 1125ms instead of 2s, 4s
-      console.log(`[DEBUG] Waiting ${delay}ms before retry...`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
@@ -168,7 +163,7 @@ async function fetchCompare(locationCity, searchTerm) {
     }
   }
   
-  console.log('[DEBUG] Optimized search strategies for:', searchTerm, ':', searchStrategies);
+
   
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -190,43 +185,56 @@ async function fetchCompare(locationCity, searchTerm) {
         num_results: 30,
       };
       
-      console.log('[DEBUG] Trying search strategy:', strategy);
-      
       const response = await rateLimitedRequest(url, params, headers);
       const { data: html } = response;
       
-      // ENHANCED DEBUGGING: Check if we got a valid response
-      console.log(`[DEBUG] HTML response length for ${searchTerm}:`, html.length);
-      console.log(`[DEBUG] HTML contains 'results-table':`, html.includes('results-table'));
-      console.log(`[DEBUG] HTML contains 'no results':`, html.includes('no results') || html.includes('לא נמצאו תוצאות'));
+      // DEBUG: Log HTML structure (only in development)
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`🔍 [HTML DEBUG] Product: ${strategy}`);
+        console.log(`   HTML Length: ${html.length}`);
+        console.log(`   HTML Preview: ${html.substring(0, 500)}...`);
+      }
       
       const $ = cheerio.load(html);
       const results = {};
 
       // Check if results table exists
       const resultsTable = $('.results-table tbody tr');
-      console.log(`[DEBUG] Found ${resultsTable.length} table rows for ${searchTerm}`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`   Results Table Rows Found: ${resultsTable.length}`);
+      }
       
       if (resultsTable.length === 0) {
-        console.log(`[DEBUG] No results table found for ${searchTerm}. Checking for error messages...`);
-        const errorMessages = $('body').text().match(/לא נמצאו תוצאות|no results|error|שגיאה/gi);
-        if (errorMessages) {
-          console.log(`[DEBUG] Error messages found:`, errorMessages);
-        }
         continue; // Try next strategy
       }
 
-      // Updated selector for results-table
+      // Updated selector for results-table - Fixed column mapping
       resultsTable.each((i, row) => {
         const $row = $(row);
-        const branch = $row.find('td:nth-child(1)').text().trim();
-        const address = $row.find('td:nth-child(2)').text().trim();
-        const priceText = $row.find('td:nth-child(3)').text().trim();
-        const quantityText = $row.find('td:nth-child(4)').text().trim();
+        const storeName = $row.find('td:nth-child(1)').text().trim();
+        const branch = $row.find('td:nth-child(2)').text().trim();
+        const address = $row.find('td:nth-child(3)').text().trim();
+        const priceText = $row.find('td:nth-child(4)').text().trim();
+        const quantityText = $row.find('td:nth-child(5)').text().trim();
+        
+        // DEBUG: Log raw data being scraped (only in development)
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`🔍 [SCRAPING DEBUG] Product: ${searchTerm}`);
+          console.log(`   Store Name: ${storeName}`);
+          console.log(`   Branch: ${branch}`);
+          console.log(`   Address: ${address}`);
+          console.log(`   Raw Price Text: "${priceText}"`);
+          console.log(`   Raw Quantity Text: "${quantityText}"`);
+        }
         
         if (branch && address && priceText) {
           const price = parseFloat(priceText.replace(/[^\d.]/g, ''));
           const quantity = parseInt(quantityText.replace(/[^\d]/g, '')) || 1;
+          
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`   Parsed Price: ${price}`);
+            console.log(`   Parsed Quantity: ${quantity}`);
+          }
           
           if (!isNaN(price) && price > 0) {
             if (!results[branch]) {
@@ -255,17 +263,15 @@ async function fetchCompare(locationCity, searchTerm) {
       // If we found results, add them and potentially exit early
       if (Object.keys(results).length > 0) {
         allResults = Object.values(results);
-        console.log(`[DEBUG] Found ${allResults.length} stores for ${searchTerm} with strategy: ${strategy}`);
         
         // Early exit: if we have good results, don't try more strategies
         if (allResults.length >= 2) {
-          console.log(`[DEBUG] Early exit for ${searchTerm} - found ${allResults.length} stores`);
           break;
         }
       }
       
     } catch (error) {
-      console.error(`[DEBUG] Error with strategy ${strategy}:`, error.message);
+      console.error(`Strategy ${strategy} failed:`, error.message);
       continue; // Try next strategy
     }
   }
@@ -278,14 +284,11 @@ async function fetchCompare(locationCity, searchTerm) {
 
 // Enhanced product search with fallback
 async function searchProductWithFallback(city, product) {
-  console.log(`[DEBUG] Searching for product:`, product.barcode, product.name);
-  
   // Try scraping first
   let prodResults = await fetchCompare(city, product.barcode);
   
   // If no results found by barcode, try by name
   if (!prodResults || prodResults.length === 0) {
-    console.log(`[DEBUG] No results for barcode ${product.barcode}, trying name search`);
     if (product.name) {
       prodResults = await fetchCompare(city, product.name);
     }
@@ -346,11 +349,12 @@ router.post('/', async (req, res) => {
 router.post('/price', async (req, res) => {
   try {
     const { city, products } = req.body;
+    console.log('Received compare request:', { city, productsCount: products?.length });
+    
     if (!city || !Array.isArray(products) || products.length === 0) {
       return res.status(400).json({ error: 'Missing city or products array. Please enter a valid city and add products to your list.' });
     }
     
-    console.log(`[PERFORMANCE] Starting optimized processing for ${products.length} products`);
     const startTime = Date.now();
     
     // BATCH OPTIMIZATION: Group similar products to reduce API calls
@@ -377,8 +381,6 @@ router.post('/price', async (req, res) => {
       }
     }
     
-    console.log(`[PERFORMANCE] Grouped ${products.length} products into ${productGroups.size} batches`);
-    
     // PARALLEL PROCESSING: Process unique products only
     const uniqueProducts = Array.from(new Set(products.map(p => p.barcode)));
     const uniqueProductData = products.filter((prod, index, arr) => 
@@ -386,35 +388,22 @@ router.post('/price', async (req, res) => {
     );
     
     const productPromises = uniqueProductData.map(async (prod, index) => {
-      console.log(`[DEBUG] ===== UNIQUE PRODUCT ${index + 1}/${uniqueProductData.length} =====`);
-      console.log(`[DEBUG] Product: ${prod.name} (Barcode: ${prod.barcode})`);
-      
       try {
         // Use enhanced search with fallback
         const prodResults = await searchProductWithFallback(city, prod);
-        
-        console.log(`[DEBUG] Product ${prod.name} returned ${prodResults ? prodResults.length : 0} store results`);
-        if (prodResults && prodResults.length > 0) {
-          console.log(`[DEBUG] First store result for ${prod.name}:`, {
-            branch: prodResults[0].branch,
-            address: prodResults[0].address,
-            totalPrice: prodResults[0].totalPrice,
-            itemsFound: prodResults[0].itemsFound,
-            isFallback: prodResults[0].isFallback || false
-          });
-        }
-        
         return { product: prod, results: prodResults || [] };
       } catch (error) {
-        console.error(`[DEBUG] Error processing product ${prod.name}:`, error);
+        console.error(`Error processing product ${prod.name}:`, error);
         return { product: prod, results: [] };
       }
     });
     
     // Wait for all unique products to be processed in parallel
     const productResults = await Promise.all(productPromises);
-    
-    console.log(`[PERFORMANCE] Parallel processing completed in ${Date.now() - startTime}ms`);
+    console.log('Product processing completed. Results:', productResults.map(r => ({ 
+      product: r.product.name, 
+      storesFound: r.results.length 
+    })));
     
     // Aggregate results by store
     let allStoreResults = {};
@@ -461,19 +450,15 @@ router.post('/price', async (req, res) => {
             price: productPrice
           };
           
-          console.log(`[DEBUG] Store ${storeKey}: Added REAL price for ${prod.name} - ₪${productPrice}`);
+          // Price added successfully
         } else {
-          console.log(`[DEBUG] Store ${storeKey}: No price found for ${prod.name} (barcode: ${prod.barcode})`);
+          // No price found for this product
         }
       }
     }
     
     // Convert to array - only real prices
     let aggregated = Object.values(allStoreResults);
-    
-    console.log('[DEBUG] ===== AGGREGATION SUMMARY =====');
-    console.log('[DEBUG] Total stores found:', aggregated.length);
-    console.log('[DEBUG] Store keys:', Object.keys(allStoreResults));
     
     // Calculate totals for real prices only
     aggregated.forEach((storeData) => {
@@ -482,21 +467,7 @@ router.post('/price', async (req, res) => {
       storeData.itemsFound = storeData.foundBarcodes.length;
     });
     
-    // Debug: Show what each store contains
-    console.log('[DEBUG] ===== STORE CONTENTS =====');
-    aggregated.forEach((storeData) => {
-      console.log(`[DEBUG] Store: ${storeData.branch}`);
-      console.log(`[DEBUG]   - Total Price: ${storeData.totalPrice}`);
-      console.log(`[DEBUG]   - Items Found: ${storeData.itemsFound}`);
-      console.log(`[DEBUG]   - Item Prices:`, storeData.itemPrices);
-    });
-    
-    console.log('[DEBUG] Final aggregated results:', aggregated.map(s => ({
-      store: s.branch,
-      totalPrice: s.totalPrice,
-      itemsFound: s.itemsFound,
-      itemPrices: s.itemPrices
-    })));
+    // Calculate totals for real prices only
     
     if (aggregated.length === 0) {
       return res.status(404).json({ 
@@ -505,9 +476,19 @@ router.post('/price', async (req, res) => {
       });
     }
     
-    console.log('[DEBUG] All stores have real products:', aggregated.length, 'stores');
+
     
-    // Calculate scores for each store - based on real prices only
+    // Filter out stores with no products found for better UX
+    aggregated = aggregated.filter(store => store.itemsFound > 0);
+    
+    if (aggregated.length === 0) {
+      return res.status(404).json({ 
+        error: 'No stores found with your products. Try a different city or check your product list.',
+        fallback: 'We could not find any stores that carry the products in your list.'
+      });
+    }
+    
+    // Calculate scores for stores that have products - based on real prices only
     const maxPrice = Math.max(...aggregated.map(s => s.totalPrice), 1);
     const totalItems = products.length;
     
@@ -515,15 +496,27 @@ router.post('/price', async (req, res) => {
       const itemsFound = store.itemsFound;
       const totalPrice = store.totalPrice;
       
-      // Client's scoring formula - based on real prices only
+      // Improved scoring formula - only positive scores
       const quantityScore = itemsFound / totalItems;
       const priceScore = totalPrice / maxPrice;
       
-      const score = (0.7 * quantityScore) - (0.3 * priceScore);
+      // Convert to positive percentage (0-100)
+      const rawScore = (0.7 * quantityScore) - (0.3 * priceScore);
+      const positiveScore = Math.max(0, rawScore) * 100;
       
-      store.score = Math.round(score * 100) / 100; // Round to 2 decimal places
+      store.score = Math.round(positiveScore); // Round to whole number
+      store.scorePercentage = `${store.score}%`; // Add percentage display
       
-      console.log(`[DEBUG] Store ${store.branch}: Score = ${store.score} (${itemsFound}/${totalItems} items, ₪${totalPrice} total)`);
+      // Add availability status for better UX
+      if (itemsFound === totalItems) {
+        store.availability = "All products available";
+      } else if (itemsFound >= totalItems * 0.8) {
+        store.availability = "Most products available";
+      } else if (itemsFound >= totalItems * 0.5) {
+        store.availability = "Some products available";
+      } else {
+        store.availability = "Limited availability";
+      }
     });
     
     // Sort by score (highest first)

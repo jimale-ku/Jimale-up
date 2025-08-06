@@ -105,7 +105,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
     setStores([]);
     try {
       // Replace with your actual backend endpoint
-      const response = await fetch('http://192.168.100.34:5000/api/compare/price', {
+      const response = await fetch('http://192.168.0.102:5000/api/compare/price', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -223,7 +223,10 @@ const WhereToBuyScreen = ({ route, navigation }) => {
             <Text style={styles.storeDetail}>מחיר אמיתי: ₪{formatPrice(item.totalPrice ?? item.price ?? 'N/A')}</Text>
             <Text style={styles.storeDetail}>מוצרים אמיתיים: {item.realPriceCount || 0}</Text>
             <Text style={styles.storeDetail}>מוצרים משוערים: {item.estimatedPriceCount || 0}</Text>
-            <Text style={styles.storeScore}>Score: {item.score || 'N/A'}</Text>
+            <Text style={styles.storeScore}>Score: {item.scorePercentage || item.score || 'N/A'}</Text>
+            {item.availability && (
+              <Text style={styles.availabilityText}>{item.availability}</Text>
+            )}
             {item.distance !== null && item.distance !== undefined && (
               <Text style={styles.storeDetail}>מרחק: {item.distance} ק"מ</Text>
             )}
@@ -500,6 +503,13 @@ const styles = StyleSheet.create({
     color: '#4CAF50',
     fontWeight: 'bold',
     marginTop: 8,
+  },
+  availabilityText: {
+    fontSize: 12,
+    color: '#1976D2',
+    fontWeight: '600',
+    marginTop: 4,
+    fontStyle: 'italic',
   },
   buyButton: {
     backgroundColor: '#1976D2',

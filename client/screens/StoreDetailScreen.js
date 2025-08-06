@@ -29,8 +29,9 @@ const StoreDetailScreen = ({ route, navigation }) => {
   const estimatedPrices = store.estimatedPrices || {};
   const itemPrices = store.itemPrices || {};
   
-  // All products should now have prices (real or estimated)
-  const allProducts = products;
+  // Only show products that have prices in this store
+  const foundBarcodes = store.foundBarcodes || [];
+  const allProducts = products.filter(p => foundBarcodes.includes(p.barcode));
   
   // Use the backend-calculated totals and counts
   const realPriceCount = store.realPriceCount || Object.keys(realPrices).length;
@@ -136,7 +137,7 @@ const StoreDetailScreen = ({ route, navigation }) => {
       <View style={styles.itemsCard}>
         <Text style={styles.cardTitle}>כל המוצרים</Text>
         <Text style={styles.itemsCount}>
-          {allProducts.length} מוצרים ({realPriceCount} מחירים אמיתיים, {estimatedPriceCount} מחירים משוערים)
+          {allProducts.length} מוצרים עם מחירים מתוך {products.length} מוצרים ברשימה
         </Text>
         {allProducts.length > 0 ? (
           <>

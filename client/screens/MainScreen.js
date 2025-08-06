@@ -168,11 +168,12 @@ export default function MainScreen({ navigation }) {
     }
   }, [searchTerm, products]);
 
-  // Fetch products from /api/products on mount - optimized for performance
+  // Fetch products from /api/products on mount - OPTIMIZED for performance
   const fetchProducts = useCallback(async (reset = false) => {
     setIsLoading(true);
     try {
-      const res = await api.get(`/products?limit=50&offset=${reset ? 0 : offset}`);
+      // Reduced initial load from 50 to 20 for faster loading
+      const res = await api.get(`/products?limit=20&offset=${reset ? 0 : offset}`);
       const products = res.data || [];
       
       // Filter to only show products with valid images (same as ALL card)
@@ -184,13 +185,13 @@ export default function MainScreen({ navigation }) {
       if (reset) {
         setProducts(validProducts);
         setFilteredProducts(validProducts);
-        setOffset(50);
-        setHasMore(validProducts.length === 50);
+        setOffset(20); // Reduced from 50 to 20
+        setHasMore(validProducts.length === 20);
       } else {
         setProducts(prev => [...prev, ...validProducts]);
         setFilteredProducts(prev => [...prev, ...validProducts]);
-        setOffset(prev => prev + 50);
-        setHasMore(validProducts.length === 50);
+        setOffset(prev => prev + 20); // Reduced from 50 to 20
+        setHasMore(validProducts.length === 20);
       }
     } catch (err) {
       setHasMore(false);

@@ -38,23 +38,12 @@ export default function GroupListScreen({ navigation }) {
     }
   };
 
+  // OPTIMIZED: Single fetchGroups call on focus only
   useFocusEffect(
     React.useCallback(() => {
       fetchGroups();
     }, [])
   );
-
-  useEffect(() => {
-    const fetchGroups = async () => {
-      try {
-        const res = await api.get('/groups/my');
-        setGroups(res.data || []);
-      } catch (err) {
-        setGroups([]);
-      }
-    };
-    fetchGroups();
-  }, []);
 
   const handleAddMember = () => {
     if (memberInput.trim() && !members.includes(memberInput.trim())) {

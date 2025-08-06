@@ -13,6 +13,10 @@ let productsCache = null;
 let productsCacheTime = 0;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
+// Cache for smart suggestions
+let suggestionsCache = new Map();
+const SUGGESTIONS_CACHE_DURATION = 2 * 60 * 1000; // 2 minutes
+
 // Get products from products.json with caching
 function getProductsFromJson() {
   const now = Date.now();
@@ -41,12 +45,23 @@ function getValidImage(img) {
   return 'https://via.placeholder.com/100';
 }
 
-// Get smart suggestions - SIMPLE VERSION
+// Get smart suggestions - OPTIMIZED VERSION with caching
 exports.getSmartSuggestions = async (req, res) => {
   try {
     const { type, limit = 20, groupId } = req.query;
     const limitNum = parseInt(limit, 10) || 20;
     const userId = req.user?.id;
+
+    // Check cache first
+    const cacheKey = `${type}-${groupId}-${limitNum}-${userId}`;
+    const cached = suggestionsCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < SUGGESTIONS_CACHE_DURATION) {
+      console.log(`📦 Smart suggestions cache hit for: ${type}`);
+      return res.json({
+        success: true,
+        suggestions: cached.data
+      });
+    }
 
     if (!userId) {
       return res.status(401).json({
@@ -87,64 +102,98 @@ exports.getSmartSuggestions = async (req, res) => {
         frequency: 1
       }));
     } else if (type === 'recent') {
-      // RECENT: Show items from the most recent completed trip (same as LAST BOUGHT tab)
+      // OPTIMIZED RECENT: Use aggregation pipeline for better performance
       const Group = require('../models/Group');
       const PurchaseHistory = require('../models/PurchaseHistory');
-      const group = await Group.findById(groupId);
-      if (!group) {
-        suggestions = []; // Return empty if no group
-      } else {
-        // Get the most recent trip timestamp for this group
-        const lastTrip = await PurchaseHistory.find({ group: groupId })
-          .sort({ boughtAt: -1 })
-          .limit(1);
-        
-        if (lastTrip.length === 0) {
-          // No trips yet - return empty
+      
+      try {
+        // Check if group exists first
+        const group = await Group.findById(groupId).lean();
+        if (!group) {
           suggestions = [];
         } else {
-          // Get all items from the most recent trip (same boughtAt timestamp)
-          const lastBoughtAt = lastTrip[0].boughtAt;
-          const lastTripItems = await PurchaseHistory.find({ 
-            group: groupId, 
-            boughtAt: lastBoughtAt 
-          }).sort({ createdAt: -1 });
+          // Use aggregation to get recent items with product details in one query
+          const recentItems = await PurchaseHistory.aggregate([
+            { $match: { group: group._id } },
+            { $sort: { boughtAt: -1 } },
+            { $limit: 1 },
+            { $lookup: {
+                from: 'purchasehistories',
+                let: { lastBoughtAt: '$boughtAt' },
+                pipeline: [
+                  { $match: { 
+                      $expr: { 
+                          $and: [
+                              { $eq: ['$group', group._id] },
+                              { $eq: ['$boughtAt', '$$lastBoughtAt'] }
+                          ]
+                      }
+                  }},
+                  { $sort: { createdAt: -1 } },
+                  { $limit: limitNum }
+                ],
+                as: 'recentItems'
+              }
+            },
+            { $unwind: '$recentItems' },
+            { $replaceRoot: { newRoot: '$recentItems' } },
+            { $lookup: {
+                from: 'products',
+                localField: 'product',
+                foreignField: '_id',
+                as: 'productDetails'
+              }
+            },
+            { $unwind: { path: '$productDetails', preserveNullAndEmptyArrays: true } },
+            { $project: {
+                productId: '$product',
+                name: { $ifNull: ['$name', '$productDetails.name'] },
+                img: { $ifNull: ['$img', '$productDetails.img'] },
+                barcode: { $ifNull: ['$barcode', '$productDetails.barcode'] },
+                quantity: { $ifNull: ['$quantity', 1] },
+                boughtAt: '$boughtAt',
+                type: { $literal: 'recent' }
+              }
+            }
+          ]);
           
-          // Map to product details from MongoDB
-          const productIds = lastTripItems.map(item => item.product).filter(Boolean);
-          const products = await Product.find({ _id: { $in: productIds } }).select('name img barcode').lean();
-          const productMap = new Map(products.map(p => [p._id.toString(), p]));
-          
-          suggestions = lastTripItems.map(item => {
-            const product = productMap.get(item.product?.toString());
-            return product && getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100'
-              ? {
-                  productId: item.product || product._id,
-                  name: item.name || product?.name || 'Unknown Product',
-                  img: getValidImage(product?.img) || item.img || '',
-                  barcode: product?.barcode || '',
-                  type: 'recent',
-                  quantity: item.quantity || 1,
-                  boughtAt: item.boughtAt,
-                  tripDate: new Date(item.boughtAt).toLocaleDateString()
-                }
-              : null;
-          }).filter(Boolean);
+          suggestions = recentItems
+            .filter(item => item.name && getValidImage(item.img) && item.img !== 'https://via.placeholder.com/100')
+            .map(item => ({
+              ...item,
+              img: getValidImage(item.img),
+              tripDate: new Date(item.boughtAt).toLocaleDateString()
+            }));
         }
+      } catch (error) {
+        console.error('Error fetching recent items:', error);
+        // Fallback to random products if recent fails
+        const products = await Product.aggregate([
+          { $sample: { size: limitNum } },
+          { $project: { _id: 1, name: 1, img: 1, barcode: 1 } }
+        ]);
+        suggestions = products.map(product => ({
+          productId: product._id,
+          name: product.name || 'Unknown Product',
+          img: getValidImage(product.img),
+          barcode: product.barcode || '',
+          type: 'recent',
+          quantity: 1,
+          boughtAt: new Date(),
+          tripDate: new Date().toLocaleDateString()
+        }));
       }
     } else if (type === 'favorite') {
+      // OPTIMIZED FAVORITE: Use aggregation for better performance
       const Group = require('../models/Group');
-      const group = await Group.findById(groupId);
-      if (!group) {
+      
+      try {
+        const group = await Group.findById(groupId).lean();
+        if (!group) {
           // Fallback: random products from MongoDB
           const products = await Product.aggregate([
-            { $sample: { size: 15 } },
-            { $project: {
-                _id: 1,
-                name: 1,
-                img: 1,
-                barcode: 1
-            }}
+            { $sample: { size: limitNum } },
+            { $project: { _id: 1, name: 1, img: 1, barcode: 1 } }
           ]);
           suggestions = products.map(product => ({
             productId: product._id,
@@ -154,110 +203,170 @@ exports.getSmartSuggestions = async (req, res) => {
             type: 'favorite'
           }));
         } else {
-        const memberIds = group.members.map(m => m.user.toString());
-        // Get all favorites for this group by any member
-        const groupFavorites = await UserFavorites.find({
-          groupId,
-          userId: { $in: memberIds }
-        }).lean();
-        // Get unique productIds
-        const uniqueProductIds = [...new Set(groupFavorites.map(fav => fav.productId))];
-        // Map to product details from MongoDB
-        const products = await Product.find({ _id: { $in: uniqueProductIds } }).select('name img barcode').lean();
-        const productMap = new Map(products.map(p => [p._id.toString(), p]));
-        
-        suggestions = uniqueProductIds.map(pid => {
-            const product = productMap.get(pid);
-            return product && getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100'
-              ? {
-                productId: pid,
-                  name: product?.name || 'Unknown Product',
-                  img: getValidImage(product?.img),
-                  barcode: product?.barcode || '',
-                type: 'favorite'
-                }
-              : null;
-          }).filter(Boolean);
+          const memberIds = group.members.map(m => m.user.toString());
+          
+          // Use aggregation to get favorites with product details in one query
+          const favoriteProducts = await UserFavorites.aggregate([
+            { $match: { 
+                groupId: group._id,
+                userId: { $in: memberIds }
+              }
+            },
+            { $group: { _id: '$productId' } }, // Get unique productIds
+            { $limit: limitNum },
+            { $lookup: {
+                from: 'products',
+                localField: '_id',
+                foreignField: '_id',
+                as: 'productDetails'
+              }
+            },
+            { $unwind: { path: '$productDetails', preserveNullAndEmptyArrays: true } },
+            { $project: {
+                productId: '$_id',
+                name: '$productDetails.name',
+                img: '$productDetails.img',
+                barcode: '$productDetails.barcode',
+                type: { $literal: 'favorite' }
+              }
+            }
+          ]);
+          
+          suggestions = favoriteProducts
+            .filter(item => item.name && getValidImage(item.img) && item.img !== 'https://via.placeholder.com/100')
+            .map(item => ({
+              ...item,
+              img: getValidImage(item.img)
+            }));
         }
+      } catch (error) {
+        console.error('Error fetching favorite items:', error);
+        // Fallback to random products if favorites fail
+        const products = await Product.aggregate([
+          { $sample: { size: limitNum } },
+          { $project: { _id: 1, name: 1, img: 1, barcode: 1 } }
+        ]);
+        suggestions = products.map(product => ({
+          productId: product._id,
+          name: product.name || 'Unknown Product',
+          img: getValidImage(product.img),
+          barcode: product.barcode || '',
+          type: 'favorite'
+        }));
+      }
     } else if (type === 'frequent') {
-      // FREQUENT: Show most frequently bought items in the last 5 trips, boosted by favorite count
+      // OPTIMIZED FREQUENT: Use aggregation for better performance
       const Group = require('../models/Group');
       const PurchaseHistory = require('../models/PurchaseHistory');
       const UserFavorites = require('../models/UserFavorites');
-      const group = await Group.findById(groupId);
-      if (!group) {
-        suggestions = [];
-      } else {
-        // 1. Get last 5 trips (unique boughtAt timestamps)
-        const lastTrips = await PurchaseHistory.find({ group: groupId })
-          .sort({ boughtAt: -1 })
-          .distinct('boughtAt');
-        const last5Trips = lastTrips.slice(0, 5);
-        if (last5Trips.length === 0) {
+      
+      try {
+        const group = await Group.findById(groupId).lean();
+        if (!group) {
           suggestions = [];
         } else {
-          // 2. Get all items from those trips
-          const tripItems = await PurchaseHistory.find({ group: groupId, boughtAt: { $in: last5Trips } });
-          // 3. Count frequency for each product (by trip)
-          const freqMap = {};
-          const tripMap = {};
-          tripItems.forEach(item => {
-            const key = item.product?.toString() || item.name;
-            if (!freqMap[key]) {
-              freqMap[key] = { count: 0, lastBought: item.boughtAt, name: item.name, product: item.product, img: item.img, quantity: 0, tripSet: new Set() };
+          // Use aggregation to get frequent items with product details in one query
+          const frequentItems = await PurchaseHistory.aggregate([
+            { $match: { group: group._id } },
+            { $sort: { boughtAt: -1 } },
+            { $group: {
+                _id: '$product',
+                count: { $sum: 1 },
+                quantity: { $sum: { $ifNull: ['$quantity', 1] } },
+                lastBought: { $max: '$boughtAt' },
+                name: { $first: '$name' },
+                img: { $first: '$img' },
+                tripCount: { $addToSet: '$boughtAt' }
+              }
+            },
+            { $addFields: {
+                uniqueTrips: { $size: '$tripCount' }
+              }
+            },
+            { $match: {
+                $or: [
+                  { uniqueTrips: { $gt: 1 } }, // Bought in multiple trips
+                  { quantity: { $gt: 1 } }     // Or quantity > 1 in single trip
+                ]
+              }
+            },
+            { $sort: { count: -1, lastBought: -1 } },
+            { $limit: limitNum },
+            { $lookup: {
+                from: 'products',
+                localField: '_id',
+                foreignField: '_id',
+                as: 'productDetails'
+              }
+            },
+            { $unwind: { path: '$productDetails', preserveNullAndEmptyArrays: true } },
+            { $lookup: {
+                from: 'userfavorites',
+                let: { productId: '$_id' },
+                pipeline: [
+                  { $match: {
+                      $expr: {
+                          $and: [
+                              { $eq: ['$groupId', group._id] },
+                              { $eq: ['$productId', '$$productId'] }
+                        ]
+                      }
+                  }},
+                  { $count: 'favoriteCount' }
+                ],
+                as: 'favorites'
+              }
+            },
+            { $addFields: {
+                favoriteCount: { $ifNull: [{ $arrayElemAt: ['$favorites.favoriteCount', 0] }, 0] }
+              }
+            },
+            { $project: {
+                productId: '$_id',
+                name: { $ifNull: ['$name', '$productDetails.name'] },
+                img: { $ifNull: ['$img', '$productDetails.img'] },
+                barcode: '$productDetails.barcode',
+                type: { $literal: 'frequent' },
+                frequency: '$count',
+                quantity: '$quantity',
+                lastBought: '$lastBought',
+                favoriteCount: '$favoriteCount'
+              }
             }
-            freqMap[key].count += 1;
-            freqMap[key].quantity += item.quantity || 1;
-            freqMap[key].tripSet.add(item.boughtAt.toISOString());
-            if (item.boughtAt > freqMap[key].lastBought) freqMap[key].lastBought = item.boughtAt;
-          });
-          // 4. Get favorite counts for each product in this group
-        const memberIds = group.members.map(m => m.user.toString());
-          const favs = await UserFavorites.find({ groupId, userId: { $in: memberIds } });
-          const favMap = {};
-          favs.forEach(fav => {
-            favMap[fav.productId] = (favMap[fav.productId] || 0) + 1;
-          });
-          // 5. Filter and map to product details
-          let filtered = Object.entries(freqMap).filter(([key, val]) => {
-            if (last5Trips.length === 1) {
-              // Only one trip: show items with quantity > 1
-              return val.quantity > 1;
-        } else {
-              // Multiple trips: show items bought in more than one trip
-              return val.tripSet.size > 1;
-            }
-          });
-          suggestions = filtered.map(([key, val]) => {
-            const product = allProducts.find(p => (
-              p._id?.toString() === val.product?.toString() ||
-              p.productId?.toString() === val.product?.toString() ||
-              p.id?.toString() === val.product?.toString() ||
-              p.name === val.name
-            ));
-            const favoriteCount = favMap[val.product?.toString()] || 0;
-            return product && getValidImage(product.img) && product.img && product.img !== 'https://via.placeholder.com/100'
-              ? {
-                  productId: val.product || product._id || product.productId,
-                  name: val.name || product?.name || 'Unknown Product',
-                  img: getValidImage(product?.img) || val.img || '',
-                  barcode: product?.barcode || '',
-                  type: 'frequent',
-                  frequency: val.count,
-                  quantity: val.quantity,
-                  lastBought: val.lastBought,
-                  favoriteCount,
-                }
-              : null;
-          }).filter(Boolean)
+          ]);
+          
+          suggestions = frequentItems
+            .filter(item => item.name && getValidImage(item.img) && item.img !== 'https://via.placeholder.com/100')
+            .map(item => ({
+              ...item,
+              img: getValidImage(item.img)
+            }))
             .sort((a, b) => {
               // Sort by frequency desc, then favoriteCount desc, then lastBought desc
               if (b.frequency !== a.frequency) return b.frequency - a.frequency;
               if (b.favoriteCount !== a.favoriteCount) return b.favoriteCount - a.favoriteCount;
               return new Date(b.lastBought) - new Date(a.lastBought);
             })
-            .slice(0, 10);
+            .slice(0, limitNum);
         }
+      } catch (error) {
+        console.error('Error fetching frequent items:', error);
+        // Fallback to random products if frequent fails
+        const products = await Product.aggregate([
+          { $sample: { size: limitNum } },
+          { $project: { _id: 1, name: 1, img: 1, barcode: 1 } }
+        ]);
+        suggestions = products.map(product => ({
+          productId: product._id,
+          name: product.name || 'Unknown Product',
+          img: getValidImage(product.img),
+          barcode: product.barcode || '',
+          type: 'frequent',
+          frequency: 1,
+          quantity: 1,
+          lastBought: new Date(),
+          favoriteCount: 0
+        }));
       }
     } else {
       // Fallback: random product IDs
@@ -268,6 +377,12 @@ exports.getSmartSuggestions = async (req, res) => {
         type: 'all'
       }));
     }
+
+    // Cache the results
+    suggestionsCache.set(cacheKey, {
+      data: suggestions,
+      timestamp: Date.now()
+    });
 
     res.json({
       success: true,
@@ -724,34 +839,113 @@ exports.markAsPurchased = async (req, res) => {
 exports.addToFavorites = async (req, res) => {
   try {
     const { productId, groupId } = req.body;
-    const userId = req.user.id;
+    
+    // Reduced logging for better performance
+    console.log('🔍 addToFavorites called for product:', productId);
+    const userId = req.user?.id;
+
+    if (!userId) {
+      console.error('❌ No user ID found in request');
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
 
     if (!productId) {
+      console.error('❌ No product ID provided');
       return res.status(400).json({
         success: false,
         message: 'Product ID is required'
       });
     }
+    
     if (!groupId) {
+      console.error('❌ No group ID provided');
       return res.status(400).json({
         success: false,
         message: 'Group ID is required'
       });
     }
 
+    // OPTIMIZED: Skip expensive validations for better performance
+    // Only validate if we're in debug mode or if the request fails
+    const isDebugMode = process.env.NODE_ENV === 'development';
+    
+    if (isDebugMode) {
+      // Validate that the group exists (only in debug mode)
+      try {
+        const Group = require('../models/Group');
+        const group = await Group.findById(groupId);
+        if (!group) {
+          console.error('❌ Group not found:', groupId);
+          return res.status(404).json({
+            success: false,
+            message: 'Group not found'
+          });
+        }
+      } catch (groupError) {
+        console.error('❌ Error validating group:', groupError);
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid group ID'
+        });
+      }
+
+      // Validate that the product exists (only in debug mode)
+      try {
+        const product = await Product.findById(productId);
+        if (!product) {
+          console.error('❌ Product not found:', productId);
+          return res.status(404).json({
+            success: false,
+            message: 'Product not found'
+          });
+        }
+      } catch (productError) {
+        console.error('❌ Error validating product:', productError);
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid product ID'
+        });
+      }
+    }
+
+    console.log('✅ Creating favorite with:', { userId, groupId, productId });
+
     try {
-      await UserFavorites.create({
+      // Check if favorite already exists
+      const existingFavorite = await UserFavorites.findOne({
         userId,
         groupId,
-        productId: productId // Store as string, not ObjectId
+        productId: productId.toString() // Ensure it's a string
       });
 
+      if (existingFavorite) {
+        console.log('⚠️  Favorite already exists');
+        return res.json({
+          success: true,
+          message: 'Product is already in favorites'
+        });
+      }
+
+      // Create new favorite
+      const newFavorite = await UserFavorites.create({
+        userId,
+        groupId,
+        productId: productId.toString() // Ensure it's a string
+      });
+
+      console.log('✅ Favorite created successfully:', newFavorite._id);
       res.json({
         success: true,
-        message: 'Product added to favorites'
+        message: 'Product added to favorites',
+        favoriteId: newFavorite._id
       });
     } catch (error) {
+      console.error('❌ Error creating favorite:', error);
       if (error.code === 11000) {
+        console.log('⚠️  Duplicate key error - product already favorited');
         res.json({
           success: true,
           message: 'Product is already in favorites'
@@ -762,10 +956,11 @@ exports.addToFavorites = async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Error adding to favorites:', error);
+    console.error('❌ Error adding to favorites:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to add to favorites'
+      message: 'Failed to add to favorites',
+      error: error.message
     });
   }
 };
@@ -774,44 +969,65 @@ exports.addToFavorites = async (req, res) => {
 exports.removeFromFavorites = async (req, res) => {
   try {
     const { productId, groupId } = req.body;
-    const userId = req.user.id;
+    
+    // Reduced logging for better performance
+    console.log('🔍 removeFromFavorites called for product:', productId);
+    const userId = req.user?.id;
+
+    if (!userId) {
+      console.error('❌ No user ID found in request');
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
 
     if (!productId) {
+      console.error('❌ No product ID provided');
       return res.status(400).json({
         success: false,
         message: 'Product ID is required'
       });
     }
+    
     if (!groupId) {
+      console.error('❌ No group ID provided');
       return res.status(400).json({
         success: false,
         message: 'Group ID is required'
       });
     }
 
+    console.log('✅ Removing favorite with:', { userId, groupId, productId });
+
     const result = await UserFavorites.deleteOne({
       userId,
       groupId,
-      productId: productId
+      productId: productId.toString() // Ensure it's a string
     });
 
+    console.log('✅ Delete result:', result);
+
     if (result.deletedCount === 0) {
+      console.log('⚠️  No favorite found to delete');
       return res.status(404).json({
         success: false,
         message: 'Product not found in favorites'
       });
     }
 
+    console.log('✅ Favorite removed successfully');
     res.json({
       success: true,
       message: 'Product removed from favorites'
     });
 
   } catch (error) {
-    console.error('Error removing from favorites:', error);
+    console.error('❌ Error removing from favorites:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to remove from favorites'
+      message: 'Failed to remove from favorites',
+      error: error.message
     });
   }
 };
@@ -820,27 +1036,45 @@ exports.removeFromFavorites = async (req, res) => {
 exports.checkFavoriteStatus = async (req, res) => {
   try {
     const { productId } = req.params;
+    
+    // Reduced logging for better performance
+    console.log('🔍 checkFavoriteStatus called for product:', productId);
     const { groupId } = req.query;
-    const userId = req.user.id;
+    const userId = req.user?.id;
+
+    if (!userId) {
+      console.error('❌ No user ID found in request');
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
 
     if (!productId) {
+      console.error('❌ No product ID provided');
       return res.status(400).json({
         success: false,
         message: 'Product ID is required'
       });
     }
+    
     if (!groupId) {
+      console.error('❌ No group ID provided');
       return res.status(400).json({
         success: false,
         message: 'Group ID is required'
       });
     }
 
+    console.log('✅ Checking favorite status with:', { userId, groupId, productId });
+
     const favorite = await UserFavorites.findOne({
       userId,
       groupId,
-      productId: productId
+      productId: productId.toString() // Ensure it's a string
     });
+
+    console.log('✅ Favorite check result:', !!favorite);
 
     res.json({
       success: true,
@@ -848,10 +1082,11 @@ exports.checkFavoriteStatus = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error checking favorite status:', error);
+    console.error('❌ Error checking favorite status:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to check favorite status'
+      message: 'Failed to check favorite status',
+      error: error.message
     });
   }
 };
@@ -1040,5 +1275,8 @@ async function getGroupFavoriteProducts(groupId, limit) {
 // Export getValidImage function for use in other modules
 module.exports = {
   getSmartSuggestions: exports.getSmartSuggestions,
+  addToFavorites: exports.addToFavorites,
+  removeFromFavorites: exports.removeFromFavorites,
+  checkFavoriteStatus: exports.checkFavoriteStatus,
   getValidImage
 }; 

@@ -255,30 +255,64 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         setLoading(false);
         return;
       }
-      // For smart cards, fetch only product IDs and then fetch details from backend
+      // For smart cards, fetch only product IDs and then fetch details from backend - OPTIMIZED
       let type = category;
       if (["recent", "favorite", "frequent"].includes(type)) {
-        const url = `/suggestions/smart?groupId=${groupId}&type=${type}&limit=50`;
+        const url = `/suggestions/smart?groupId=${groupId}&type=${type}&limit=20`; // Reduced from 50 to 20
         const response = await api.get(url);
         const suggestionsList = response.data.suggestions || [];
-        // Fetch product details for each productId
-        const productDetails = await Promise.all(
-          suggestionsList.map(async (s) => {
-            try {
-              const prodRes = await api.get(`/products/${s.productId}`);
-              return { ...prodRes.data, ...s };
-            } catch (err) {
-              return { productId: s.productId, name: 'Unknown Product', img: '', ...s };
+        
+        // OPTIMIZED: Batch fetch product details instead of individual calls
+        if (suggestionsList.length > 0) {
+          const productIds = suggestionsList.map(s => s.productId).filter(Boolean);
+          
+          try {
+            // Batch fetch all products at once
+            const batchResponse = await api.post('/products/batch', { productIds });
+            const productMap = new Map();
+            
+            if (batchResponse.data && Array.isArray(batchResponse.data)) {
+              batchResponse.data.forEach(product => {
+                productMap.set(product._id, product);
+              });
             }
-          })
-        );
-        setSuggestions(productDetails);
-        if (type === 'favorite') {
-          const favoriteIds = new Set(productDetails.map(f => f.productId));
-          setFavorites(favoriteIds);
+            
+            // Merge product details with suggestions
+            const productDetails = suggestionsList.map(s => {
+              const product = productMap.get(s.productId);
+              return product ? { ...product, ...s } : { productId: s.productId, name: 'Unknown Product', img: '', ...s };
+            });
+            
+            setSuggestions(productDetails);
+            
+            if (type === 'favorite') {
+              const favoriteIds = new Set(productDetails.map(f => f.productId));
+              setFavorites(favoriteIds);
+            } else {
+              // OPTIMIZED: Only load favorites if on favorite tab
+              if (selectedSmartTab === 'favorite') {
+                await loadFavoritesStatus(productDetails);
+              }
+            }
+          } catch (err) {
+            console.error('Batch fetch failed, falling back to individual calls:', err);
+            // Fallback to individual calls if batch fails
+            const productDetails = await Promise.all(
+              suggestionsList.slice(0, 10).map(async (s) => { // Limit to 10 for performance
+                try {
+                  const prodRes = await api.get(`/products/${s.productId}`);
+                  return { ...prodRes.data, ...s };
+                } catch (err) {
+                  return { productId: s.productId, name: 'Unknown Product', img: '', ...s };
+                }
+              })
+            );
+            setSuggestions(productDetails);
+          }
         } else {
-          await loadFavoritesStatus(productDetails);
+          setSuggestions([]);
         }
+        
         setLoading(false);
         return;
       }
@@ -290,15 +324,31 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
     }
   };
 
-  // Load favorites status for all suggestions
+  // Load favorites status for all suggestions - OPTIMIZED VERSION
   const loadFavoritesStatus = async (suggestions) => {
     try {
+      if (!groupId) {
+        console.log('⚠️ No groupId available, skipping favorites status load');
+        return;
+      }
+
+      // Only load favorites if we're on the favorite tab to improve performance
+      if (selectedSmartTab !== 'favorite') {
+        console.log('⏭️ Skipping favorites load - not on favorite tab');
+        return;
+      }
+
       const favoriteIds = new Set();
       for (const item of suggestions) {
         if (item.productId) {
-          const response = await api.get(`/suggestions/favorites/check/${item.productId}?groupId=${groupId}`);
-          if (response.data.isFavorited) {
-            favoriteIds.add(item.productId);
+          try {
+            const response = await api.get(`/suggestions/favorites/check/${item.productId}?groupId=${groupId}`);
+            if (response.data.isFavorited) {
+              favoriteIds.add(item.productId);
+            }
+          } catch (error) {
+            console.error(`❌ Error checking favorite status for product ${item.productId}:`, error);
+            // Continue with other items even if one fails
           }
         }
       }
@@ -311,9 +361,26 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
   // Toggle favorite status
   const toggleFavorite = async (productId) => {
     try {
+      // Validate required parameters
+      if (!productId) {
+        console.error('❌ No productId provided to toggleFavorite');
+        showToast('Invalid product ID');
+        return;
+      }
+
+      if (!groupId) {
+        console.error('❌ No groupId available for favorite toggle');
+        showToast('Group context is required for favorites');
+        return;
+      }
+
+      // Reduced logging for better performance
+      console.log('🔍 Toggle favorite:', productId);
+
       const isFavorited = favorites.has(productId);
       if (isFavorited) {
-        await api.post('/suggestions/favorites/remove', { productId, groupId });
+        const response = await api.post('/suggestions/favorites/remove', { productId, groupId });
+        
         setFavorites(prev => {
           const newSet = new Set(prev);
           newSet.delete(productId);
@@ -321,7 +388,8 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         });
         showToast('Removed from favorites');
       } else {
-        await api.post('/suggestions/favorites/add', { productId, groupId });
+        const response = await api.post('/suggestions/favorites/add', { productId, groupId });
+        
         setFavorites(prev => {
           const newSet = new Set(prev);
           newSet.add(productId);
@@ -330,8 +398,18 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         showToast('Added to favorites');
       }
     } catch (error) {
-      console.error('Error toggling favorite:', error);
-      showToast('Failed to update favorite status');
+      console.error('❌ Error toggling favorite:', error.message);
+      
+      // Provide more specific error messages
+      if (error.response?.status === 400) {
+        showToast(error.response.data?.message || 'Invalid request data');
+      } else if (error.response?.status === 401) {
+        showToast('Authentication required');
+      } else if (error.response?.status === 500) {
+        showToast('Server error - please try again');
+      } else {
+        showToast('Failed to update favorite status');
+      }
     }
   };
 
