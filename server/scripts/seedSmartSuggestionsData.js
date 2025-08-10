@@ -74,8 +74,14 @@ async function generateUserFavorites(users, products) {
       // Avoid duplicates
       if (!userFavProducts.includes(product._id || product.name)) {
         userFavProducts.push(product._id || product.name);
+        
+        // Get a random group for this user (for seeding purposes)
+        // In real usage, this would be the actual group the user is in
+        const randomGroupId = new mongoose.Types.ObjectId(); // Create a dummy group ID for seeding
+        
         userFavorites.push({
           userId: user._id,
+          groupId: randomGroupId, // Add the required groupId field
           productId: product._id || product.name,
           addedAt: favoriteDate,
           createdAt: favoriteDate,

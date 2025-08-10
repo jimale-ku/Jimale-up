@@ -1,14 +1,14 @@
-const { safeBarcodeReplacement } = require('./safeBarcodeReplacement');
 const mongoose = require('mongoose');
-const fs = require('fs');
+const Product = require('../models/Product');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
-// Connect to MongoDB
+// MongoDB connection
+const MONGODB_URI = process.env.MONGO_URI || 'mongodb+srv://ibrahimkhalif22031:Allah22031@ibrahim.cfpeif6.mongodb.net/smartbuy?retryWrites=true&w=majority';
+
 async function connectToDatabase() {
   try {
-    const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://Khalid211:khalidkind211@cluster0.r7gzuda.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
-    await mongoose.connect(MONGO_URI);
+    await mongoose.connect(MONGODB_URI);
     console.log('✅ Connected to MongoDB');
   } catch (error) {
     console.error('❌ Error connecting to MongoDB:', error);
@@ -19,66 +19,72 @@ async function connectToDatabase() {
 // Check current database state
 async function checkCurrentDatabase() {
   try {
-    await connectToDatabase();
-    
-    const Product = require('../models/Product');
-    
-    console.log('\n🔍 CHECKING CURRENT DATABASE STATE...');
+    console.log('🔍 CHECKING CURRENT DATABASE STATE...');
     console.log('=' .repeat(50));
     
-    // Get total count
     const totalProducts = await Product.countDocuments();
     console.log(`📊 Total products in database: ${totalProducts}`);
     
-    // Check products with images
     const productsWithImages = await Product.countDocuments({
       img: { $exists: true, $ne: null, $ne: '' }
     });
-    console.log(`🖼️  Products with images: ${productsWithImages}`);
+    console.log(`🖼 Products with images: ${productsWithImages}`);
     
-    // Check products without images
-    const productsWithoutImages = await Product.countDocuments({
-      $or: [
-        { img: { $exists: false } },
-        { img: null },
-        { img: '' }
-      ]
-    });
+    const productsWithoutImages = totalProducts - productsWithImages;
     console.log(`❌ Products without images: ${productsWithoutImages}`);
     
     // Show sample products
     const sampleProducts = await Product.find().limit(5).lean();
     console.log('\n📋 Sample products in database:');
-    sampleProducts.forEach((product, index) => {
-      console.log(`${index + 1}. ${product.name} (Barcode: ${product.barcode})`);
-    });
+    if (sampleProducts.length > 0) {
+      sampleProducts.forEach((product, index) => {
+        console.log(`${index + 1}. ${product.name} (Barcode: ${product.barcode})`);
+      });
+    } else {
+      console.log('No products found in database.');
+    }
     
-    await mongoose.disconnect();
     return { totalProducts, productsWithImages, productsWithoutImages };
     
   } catch (error) {
-    console.error('❌ Error checking database:', error);
-    await mongoose.disconnect();
+    console.error('❌ Error checking database state:', error);
     return null;
   }
 }
 
-// Load and populate updated data
-async function populateWithUpdatedData() {
+// Load products from products_safe_updated.json
+function loadUpdatedProducts() {
   try {
-    await connectToDatabase();
+    const productsPath = path.resolve(__dirname, 'products_safe_updated.json');
+    const fs = require('fs');
     
-    const Product = require('../models/Product');
-    
-    // Check if updated file exists
-    const updatedFilePath = path.join(__dirname, 'products_safe_updated.json');
-    if (!fs.existsSync(updatedFilePath)) {
-      console.error('❌ Updated products file not found. Please run barcode replacement first.');
-      return;
+    if (!fs.existsSync(productsPath)) {
+      console.error('❌ products_safe_updated.json not found!');
+      console.log('Please run the barcode replacement script first to create this file.');
+      return null;
     }
     
-    const updatedProducts = JSON.parse(fs.readFileSync(updatedFilePath, 'utf8'));
-    console.log(`📊 Found ${updatedProducts.length} updated products to populate`);
+    const data = fs.readFileSync(productsPath, 'utf-8');
+    const products = JSON.parse(data);
+    console.log(`✅ Loaded ${products.length} products from products_safe_updated.json`);
+    return products;
+  } catch (error) {
+    console.error('❌ Error loading products_safe_updated.json:', error);
+    return null;
+  }
+}
+
+// Populate database with updated data
+async function populateWithUpdatedData() {
+  try {
+    console.log('📥 POPULATING DATABASE WITH UPDATED DATA...');
+    console.log('=' .repeat(50));
+    
+    // Load updated products
+    const updatedProducts = loadUpdatedProducts();
+    if (!updatedProducts) {
+      return null;
+    }
     
     // Clear existing products
     console.log('🗑️  Clearing existing products...');
@@ -119,12 +125,10 @@ async function populateWithUpdatedData() {
       console.log(`${index + 1}. ${product.name} (Barcode: ${product.barcode})`);
     });
     
-    await mongoose.disconnect();
     return { totalProducts, productsWithImages };
     
   } catch (error) {
     console.error('❌ Error populating database:', error);
-    await mongoose.disconnect();
     return null;
   }
 }
@@ -143,17 +147,21 @@ async function runCompleteWorkflow() {
     return;
   }
   
-  // Step 2: Run barcode replacement
-  console.log('\n🔄 STEP 2: Running barcode replacement...');
+  // Step 2: Check if products_safe_updated.json exists
+  console.log('\n🔄 STEP 2: Checking for updated products file...');
   console.log('=' .repeat(40));
   
-  try {
-    const replacementResults = safeBarcodeReplacement();
-    console.log('✅ Barcode replacement completed');
-  } catch (error) {
-    console.error('❌ Barcode replacement failed:', error);
+  const fs = require('fs');
+  const productsPath = path.resolve(__dirname, 'products_safe_updated.json');
+  
+  if (!fs.existsSync(productsPath)) {
+    console.error('❌ products_safe_updated.json not found!');
+    console.log('Please run the barcode replacement script first to create this file.');
+    console.log('Expected file: ' + productsPath);
     return;
   }
+  
+  console.log('✅ Found products_safe_updated.json');
   
   // Step 3: Populate database with updated data
   console.log('\n📥 STEP 3: Populating database with updated data...');
@@ -178,4 +186,4 @@ async function runCompleteWorkflow() {
 }
 
 // Run the complete workflow
-runCompleteWorkflow(); 
+runCompleteWorkflow();
