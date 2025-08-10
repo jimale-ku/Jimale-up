@@ -29,9 +29,8 @@ const StoreDetailScreen = ({ route, navigation }) => {
   const estimatedPrices = store.estimatedPrices || {};
   const itemPrices = store.itemPrices || {};
   
-  // Only show products that have prices in this store
-  const foundBarcodes = store.foundBarcodes || [];
-  const allProducts = products.filter(p => foundBarcodes.includes(p.barcode));
+  // All products should now have prices (real or estimated)
+  const allProducts = products;
   
   // Use the backend-calculated totals and counts
   const realPriceCount = store.realPriceCount || Object.keys(realPrices).length;
@@ -44,12 +43,34 @@ const StoreDetailScreen = ({ route, navigation }) => {
     console.log('Buy button pressed', { tripType, store });
     if (tripType === 'group' && groupId) {
       try {
+        // Get the products that were actually found/bought from this store
+        const foundBarcodes = store.foundBarcodes || [];
+        const boughtProducts = products.filter(p => foundBarcodes.includes(p.barcode));
+        
+        console.log('Products to mark as bought:', boughtProducts.map(p => p.name));
+        console.log('Products that will be lost:', products.filter(p => !foundBarcodes.includes(p.barcode)).map(p => p.name));
+        
+        // Get the scraped product details (including images) from the store data
+        const boughtProductsWithDetails = boughtProducts.map(p => {
+          const scrapedDetails = store.productDetails?.[p.barcode];
+          return {
+            _id: p._id,
+            barcode: p.barcode,
+            name: scrapedDetails?.name || p.name,
+            quantity: p.quantity || 1,
+            img: scrapedDetails?.img || p.img,
+            icon: scrapedDetails?.icon || p.icon,
+            productId: p.productId || p.product || null
+          };
+        });
+        
         await api.post(`/groups/${groupId}/list/complete-trip`, {
           store: {
             branch: store.branch,
             address: store.address,
             totalPrice: store.totalPrice ?? store.price ?? null,
-          }
+          },
+          boughtProducts: boughtProductsWithDetails
         });
         // Navigate back to group list with success
         navigation.navigate('GroupSharedList', { groupId });
@@ -59,11 +80,18 @@ const StoreDetailScreen = ({ route, navigation }) => {
     } else if (tripType === 'personal') {
       console.log('Personal trip buy logic triggered');
       try {
+        // Get the products that were actually found/bought from this store
+        const foundBarcodes = store.foundBarcodes || [];
+        const boughtProducts = products.filter(p => foundBarcodes.includes(p.barcode));
+        
+        console.log('Personal trip - Products to mark as bought:', boughtProducts.map(p => p.name));
+        console.log('Personal trip - Products that will be lost:', products.filter(p => !foundBarcodes.includes(p.barcode)).map(p => p.name));
+        
         completeTrip({
           branch: store.branch || store.storeName,
           address: store.address,
           totalPrice: store.totalPrice ?? store.price ?? null,
-        });
+        }, boughtProducts);
         console.log('Navigating to TransitionScreenPersonal');
         navigation.replace('TransitionScreenPersonal');
       } catch (err) {
@@ -137,7 +165,7 @@ const StoreDetailScreen = ({ route, navigation }) => {
       <View style={styles.itemsCard}>
         <Text style={styles.cardTitle}>כל המוצרים</Text>
         <Text style={styles.itemsCount}>
-          {allProducts.length} מוצרים עם מחירים מתוך {products.length} מוצרים ברשימה
+          {allProducts.length} מוצרים ({realPriceCount} מחירים אמיתיים, {estimatedPriceCount} מחירים משוערים)
         </Text>
         {allProducts.length > 0 ? (
           <>

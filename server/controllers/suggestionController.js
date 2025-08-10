@@ -17,6 +17,18 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 let suggestionsCache = new Map();
 const SUGGESTIONS_CACHE_DURATION = 2 * 60 * 1000; // 2 minutes
 
+// Function to clear cache for a specific user/group
+function clearSuggestionsCache(userId, groupId) {
+  const keysToDelete = [];
+  for (const [key, value] of suggestionsCache.entries()) {
+    if (key.includes(userId) || key.includes(groupId)) {
+      keysToDelete.push(key);
+    }
+  }
+  keysToDelete.forEach(key => suggestionsCache.delete(key));
+  console.log(`🗑️ Cleared ${keysToDelete.length} cache entries for user: ${userId}, group: ${groupId}`);
+}
+
 // Get products from products.json with caching
 function getProductsFromJson() {
   const now = Date.now();
@@ -86,11 +98,6 @@ exports.getSmartSuggestions = async (req, res) => {
       ]);
       
       console.log(`📦 ALL card: Found ${products.length} products from MongoDB`);
-      console.log('🔍 ALL card sample products:', products.slice(0, 3).map(p => ({ 
-        name: p.name, 
-        hasImage: !!p.img, 
-        imageType: p.img ? p.img.substring(0, 30) : 'none' 
-      })));
       
       suggestions = products.map(product => ({
         productId: product._id,
@@ -162,7 +169,7 @@ exports.getSmartSuggestions = async (req, res) => {
             .map(item => ({
               ...item,
               img: getValidImage(item.img),
-              tripDate: new Date(item.boughtAt).toLocaleDateString()
+                  tripDate: new Date(item.boughtAt).toLocaleDateString()
             }));
         }
       } catch (error) {
@@ -187,9 +194,11 @@ exports.getSmartSuggestions = async (req, res) => {
       // OPTIMIZED FAVORITE: Use aggregation for better performance
       const Group = require('../models/Group');
       
+      console.log('💖 Fetching favorites for user:', req.user.id, 'GroupId:', groupId);
+      
       try {
         const group = await Group.findById(groupId).lean();
-        if (!group) {
+      if (!group) {
           // Fallback: random products from MongoDB
           const products = await Product.aggregate([
             { $sample: { size: limitNum } },
@@ -203,41 +212,36 @@ exports.getSmartSuggestions = async (req, res) => {
             type: 'favorite'
           }));
         } else {
-          const memberIds = group.members.map(m => m.user.toString());
+                // Get favorites for the current user only - SIMPLE APPROACH
+        const userFavorites = await UserFavorites.find({ 
+          groupId: group._id, 
+          userId: req.user.id 
+        }).limit(limitNum);
+        
+        console.log('💖 Found', userFavorites.length, 'user favorites');
+        
+        if (userFavorites.length === 0) {
+          suggestions = [];
+        } else {
+          // Get product IDs from favorites
+          const productIds = userFavorites.map(fav => fav.productId);
+          console.log('💖 Product IDs from favorites:', productIds);
           
-          // Use aggregation to get favorites with product details in one query
-          const favoriteProducts = await UserFavorites.aggregate([
-            { $match: { 
-                groupId: group._id,
-                userId: { $in: memberIds }
-              }
-            },
-            { $group: { _id: '$productId' } }, // Get unique productIds
-            { $limit: limitNum },
-            { $lookup: {
-                from: 'products',
-                localField: '_id',
-                foreignField: '_id',
-                as: 'productDetails'
-              }
-            },
-            { $unwind: { path: '$productDetails', preserveNullAndEmptyArrays: true } },
-            { $project: {
-                productId: '$_id',
-                name: '$productDetails.name',
-                img: '$productDetails.img',
-                barcode: '$productDetails.barcode',
-                type: { $literal: 'favorite' }
-              }
-            }
-          ]);
+          // Fetch products directly
+          const products = await Product.find({ _id: { $in: productIds } });
+          console.log('💖 Found', products.length, 'products from database');
           
-          suggestions = favoriteProducts
-            .filter(item => item.name && getValidImage(item.img) && item.img !== 'https://via.placeholder.com/100')
-            .map(item => ({
-              ...item,
-              img: getValidImage(item.img)
-            }));
+          // Map to suggestions format
+          suggestions = products.map(product => ({
+            productId: product._id,
+            name: product.name || 'Unknown Product',
+            img: getValidImage(product.img),
+            barcode: product.barcode || '',
+            type: 'favorite'
+          }));
+        }
+          
+          console.log('💖 Final suggestions count:', suggestions.length);
         }
       } catch (error) {
         console.error('Error fetching favorite items:', error);
@@ -251,9 +255,9 @@ exports.getSmartSuggestions = async (req, res) => {
           name: product.name || 'Unknown Product',
           img: getValidImage(product.img),
           barcode: product.barcode || '',
-          type: 'favorite'
+                type: 'favorite'
         }));
-      }
+        }
     } else if (type === 'frequent') {
       // OPTIMIZED FREQUENT: Use aggregation for better performance
       const Group = require('../models/Group');
@@ -262,9 +266,9 @@ exports.getSmartSuggestions = async (req, res) => {
       
       try {
         const group = await Group.findById(groupId).lean();
-        if (!group) {
-          suggestions = [];
-        } else {
+      if (!group) {
+        suggestions = [];
+      } else {
           // Use aggregation to get frequent items with product details in one query
           const frequentItems = await PurchaseHistory.aggregate([
             { $match: { group: group._id } },
@@ -937,6 +941,10 @@ exports.addToFavorites = async (req, res) => {
       });
 
       console.log('✅ Favorite created successfully:', newFavorite._id);
+      
+      // Clear cache to ensure fresh data is fetched
+      clearSuggestionsCache(userId, groupId);
+      
       res.json({
         success: true,
         message: 'Product added to favorites',
@@ -1017,6 +1025,10 @@ exports.removeFromFavorites = async (req, res) => {
     }
 
     console.log('✅ Favorite removed successfully');
+    
+    // Clear cache to ensure fresh data is fetched
+    clearSuggestionsCache(userId, groupId);
+    
     res.json({
       success: true,
       message: 'Product removed from favorites'

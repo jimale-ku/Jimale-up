@@ -8,8 +8,20 @@ import { PersonalListProvider } from '../services/PersonalListContext';
 const CARD_MARGIN = 12;
 
 export default function MyListScreen({ navigation }) {
-  const { personalList, setPersonalList, lastBought, lastStore } = useContext(PersonalListProvider._context || require('../services/PersonalListContext').default);
+  const { 
+    personalList, 
+    setPersonalList, 
+    lastBought, 
+    lastStore, 
+    tripHistory, 
+    selectedTrip,
+    selectTrip,
+    clearSelectedTrip
+  } = useContext(PersonalListProvider._context || require('../services/PersonalListContext').default);
+  
   const [activeTab, setActiveTab] = useState('current'); // 'current' or 'lastBought'
+  const [showTripHistory, setShowTripHistory] = useState(false);
+  
   const items = personalList || [];
   const lastBoughtItems = lastBought || [];
   const PLACEHOLDER_IMAGE = 'https://via.placeholder.com/100?text=No+Image';
@@ -20,7 +32,9 @@ export default function MyListScreen({ navigation }) {
       barcode: item.barcode || '',
       name: item.name,
       quantity: item.quantity || 1,
-      image: item.img || item.icon // Add the image field like group trip
+      image: item.img || item.icon, // Add the image field like group trip
+      img: item.img || item.icon, // Also preserve the img field for consistency
+      icon: item.img || item.icon // Also preserve the icon field
     }));
     navigation.navigate('WhereToBuy', {
       source: 'personal',
@@ -101,6 +115,32 @@ export default function MyListScreen({ navigation }) {
       <Text style={styles.productName} numberOfLines={2}>{item.name}</Text>
     </View>
   );
+
+  // Render trip history item
+  const renderTripHistoryItem = ({ item }) => {
+    const tripDate = new Date(item.completedAt).toLocaleDateString();
+    const tripTime = new Date(item.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    return (
+      <TouchableOpacity 
+        style={[styles.tripCard, selectedTrip?.id === item.id && styles.selectedTripCard]}
+        onPress={() => selectTrip(item.id)}
+      >
+        <View style={styles.tripHeader}>
+          <Text style={styles.tripTitle}>Trip #{item.tripNumber}</Text>
+          <Text style={styles.tripDate}>{tripDate} at {tripTime}</Text>
+        </View>
+        {item.store && (
+          <Text style={styles.tripStore}>
+            {item.store.branch || item.store.storeName} - {item.items.length} items
+          </Text>
+        )}
+        {item.store?.totalPrice && (
+          <Text style={styles.tripPrice}>Total: ₪{item.store.totalPrice}</Text>
+        )}
+      </TouchableOpacity>
+    );
+  };
 
   // Empty state UI
   const renderEmptyState = () => (
@@ -186,13 +226,66 @@ export default function MyListScreen({ navigation }) {
             </View>
           ) : (
             <>
-              {lastStore && (
-                <View style={{ backgroundColor: '#E3F2FD', borderRadius: 10, padding: 12, marginBottom: 10 }}>
-                  <Text style={{ color: '#1976D2', fontWeight: 'bold' }}>Store: {lastStore.branch || lastStore.storeName}</Text>
-                  <Text style={{ color: '#1976D2' }}>Address: {lastStore.address}</Text>
-                  {lastStore.totalPrice && <Text style={{ color: '#1976D2' }}>Total Price:  {lastStore.totalPrice}</Text>}
+              {/* Trip History Button */}
+              {tripHistory.length > 1 && (
+                <View style={{ marginBottom: 10 }}>
+                  <TouchableOpacity
+                    style={styles.tripHistoryButton}
+                    onPress={() => setShowTripHistory(!showTripHistory)}
+                  >
+                    <Ionicons name={showTripHistory ? "chevron-up" : "chevron-down"} size={20} color="#2E7D32" />
+                    <Text style={styles.tripHistoryButtonText}>
+                      {showTripHistory ? 'Hide Trip History' : `Show Trip History (${tripHistory.length} trips)`}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               )}
+
+              {/* Trip History List */}
+              {showTripHistory && tripHistory.length > 0 && (
+                <View style={{ marginBottom: 10 }}>
+                  <FlatList
+                    data={tripHistory}
+                    renderItem={renderTripHistoryItem}
+                    keyExtractor={(item) => item.id}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ paddingHorizontal: 8 }}
+                  />
+                  {selectedTrip && (
+                    <TouchableOpacity
+                      style={styles.clearTripButton}
+                      onPress={clearSelectedTrip}
+                    >
+                      <Text style={styles.clearTripButtonText}>Show Most Recent Trip</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+
+              {/* Store Info */}
+              {lastStore && (
+                <View style={{ backgroundColor: '#E3F2FD', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                  <Text style={{ color: '#1976D2', fontWeight: 'bold' }}>
+                    Store: {lastStore.branch || lastStore.storeName}
+                  </Text>
+                  <Text style={{ color: '#1976D2' }}>
+                    Address: {lastStore.address}
+                  </Text>
+                  {lastStore.totalPrice && (
+                    <Text style={{ color: '#1976D2' }}>
+                      Total Price: ₪{lastStore.totalPrice}
+                    </Text>
+                  )}
+                  {selectedTrip && (
+                    <Text style={{ color: '#1976D2', fontStyle: 'italic' }}>
+                      Trip #{selectedTrip.tripNumber} - {new Date(selectedTrip.completedAt).toLocaleDateString()}
+                    </Text>
+                  )}
+                </View>
+              )}
+
+              {/* Items List */}
               <FlatList
                 key={'last-bought'}
                 data={lastBoughtItems}
@@ -306,20 +399,85 @@ const styles = StyleSheet.create({
     backgroundColor: '#2E7D32',
     paddingVertical: 16,
     paddingHorizontal: 32,
-    borderRadius: 8,
-    width: '45%', // Adjust as needed
   },
   compareButton: {
     backgroundColor: '#1976D2',
     paddingVertical: 16,
     paddingHorizontal: 32,
-    borderRadius: 8,
-    width: '45%', // Adjust as needed
   },
   buttonText: {
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 18,
     textAlign: 'center',
+  },
+  tripCard: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 12,
+    marginRight: 10,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    minWidth: 150,
+  },
+  selectedTripCard: {
+    borderColor: '#2E7D32',
+    borderWidth: 2,
+  },
+  tripHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  tripTitle: {
+    fontWeight: 'bold',
+    fontSize: 16,
+    color: '#333',
+  },
+  tripDate: {
+    fontSize: 12,
+    color: '#666',
+  },
+  tripStore: {
+    fontSize: 14,
+    color: '#555',
+    marginBottom: 4,
+  },
+  tripPrice: {
+    fontWeight: 'bold',
+    fontSize: 16,
+    color: '#1976D2',
+  },
+  tripHistoryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E0F2F7',
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  tripHistoryButtonText: {
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#2E7D32',
+    fontWeight: 'bold',
+  },
+  clearTripButton: {
+    backgroundColor: '#FFE0E0',
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 8,
+    alignSelf: 'center',
+    marginTop: 10,
+  },
+  clearTripButtonText: {
+    color: '#D32F2F',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

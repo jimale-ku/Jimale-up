@@ -4,7 +4,7 @@ import EventEmitter from 'eventemitter3';
 
 // API configuration - change IP address to match your computer
 // You can set this via environment variable or change directly here
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://192.168.0.102:5000/api';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://192.168.100.41:5000/api';
 const api = axios.create({ baseURL: API_BASE_URL });
 
 // Performance optimization: Add request caching

@@ -190,9 +190,7 @@ async function fetchCompare(locationCity, searchTerm) {
       
       // DEBUG: Log HTML structure (only in development)
       if (process.env.NODE_ENV === 'development') {
-        console.log(`🔍 [HTML DEBUG] Product: ${strategy}`);
-        console.log(`   HTML Length: ${html.length}`);
-        console.log(`   HTML Preview: ${html.substring(0, 500)}...`);
+        console.log(`🔍 [HTML DEBUG] Product: ${strategy} - Length: ${html.length}`);
       }
       
       const $ = cheerio.load(html);
@@ -219,12 +217,7 @@ async function fetchCompare(locationCity, searchTerm) {
         
         // DEBUG: Log raw data being scraped (only in development)
         if (process.env.NODE_ENV === 'development') {
-          console.log(`🔍 [SCRAPING DEBUG] Product: ${searchTerm}`);
-          console.log(`   Store Name: ${storeName}`);
-          console.log(`   Branch: ${branch}`);
-          console.log(`   Address: ${address}`);
-          console.log(`   Raw Price Text: "${priceText}"`);
-          console.log(`   Raw Quantity Text: "${quantityText}"`);
+          console.log(`🔍 [SCRAPING] ${searchTerm}: ${storeName} - ${branch} - ${priceText}`);
         }
         
         if (branch && address && priceText) {
@@ -232,8 +225,7 @@ async function fetchCompare(locationCity, searchTerm) {
           const quantity = parseInt(quantityText.replace(/[^\d]/g, '')) || 1;
           
           if (process.env.NODE_ENV === 'development') {
-            console.log(`   Parsed Price: ${price}`);
-            console.log(`   Parsed Quantity: ${quantity}`);
+            console.log(`   Parsed: ${price}₪ x${quantity}`);
           }
           
           if (!isNaN(price) && price > 0) {
@@ -282,20 +274,95 @@ async function fetchCompare(locationCity, searchTerm) {
   return allResults;
 }
 
-// Enhanced product search with fallback
+// Enhanced product search with aggressive fallback strategies
 async function searchProductWithFallback(city, product) {
-  // Try scraping first
-  let prodResults = await fetchCompare(city, product.barcode);
+  const MultiScraper = require('../services/multiScraper');
+  const multiScraper = new MultiScraper();
   
-  // If no results found by barcode, try by name
-  if (!prodResults || prodResults.length === 0) {
-    if (product.name) {
-      prodResults = await fetchCompare(city, product.name);
+  let prodResults = [];
+  
+  // OPTIMIZED STRATEGIES FOR CHP.CO.IL - Focus on what actually works
+  
+  // Strategy 1: Try original barcode (MOST EFFECTIVE)
+  if (product.barcode && product.barcode.length >= 3) {
+    prodResults = await multiScraper.searchProduct(city, product.barcode);
+    if (prodResults && prodResults.length > 0) {
+      console.log(`✅ Found results for "${product.name}" using barcode: ${product.barcode}`);
+      return multiScraper.aggregateResults(prodResults);
     }
   }
   
-  // Return results (no fallback - only real prices)
-  return prodResults || [];
+  // Strategy 2: Try padded barcode (if short)
+  if (product.barcode && /^\d+$/.test(product.barcode) && product.barcode.length < 13) {
+    const paddedBarcode = product.barcode.padStart(13, '0');
+    prodResults = await multiScraper.searchProduct(city, paddedBarcode);
+    if (prodResults && prodResults.length > 0) {
+      console.log(`✅ Found results for "${product.name}" using padded barcode: ${paddedBarcode}`);
+      return multiScraper.aggregateResults(prodResults);
+    }
+  }
+  
+  // Strategy 3: Try original name (SECOND MOST EFFECTIVE)
+  if (product.name && product.name.length >= 3) {
+    prodResults = await multiScraper.searchProduct(city, product.name);
+    if (prodResults && prodResults.length > 0) {
+      console.log(`✅ Found results for "${product.name}" using name: ${product.name}`);
+      return multiScraper.aggregateResults(prodResults);
+    }
+  }
+  
+  // Strategy 4: Try cleaned name (remove weights/codes)
+  if (product.name && !/^\d+$/.test(product.name)) {
+    const cleanName = product.name
+      .replace(/\d+[גקל]+\s*[ק"ג]?/g, '') // Remove weights like "1.9 ק"ג", "400גרם"
+      .replace(/\d+\*?\d+[גקל]+/g, '') // Remove codes like "5*55ג+5*65ג"
+      .replace(/\d+%/g, '') // Remove percentages like "30%"
+      .replace(/\s+/g, ' ') // Normalize spaces
+      .trim();
+    
+    if (cleanName !== product.name && cleanName.length >= 3) {
+      prodResults = await multiScraper.searchProduct(city, cleanName);
+      if (prodResults && prodResults.length > 0) {
+        console.log(`✅ Found results for "${product.name}" using cleaned name: ${cleanName}`);
+        return multiScraper.aggregateResults(prodResults);
+      }
+    }
+  }
+  
+  // Strategy 5: Try brand name (first word)
+  if (product.name && !/^\d+$/.test(product.name)) {
+    const words = product.name.split(' ');
+    if (words.length > 1) {
+      const brandName = words[0];
+      if (brandName.length >= 2) {
+        prodResults = await multiScraper.searchProduct(city, brandName);
+        if (prodResults && prodResults.length > 0) {
+          console.log(`✅ Found results for "${product.name}" using brand name: ${brandName}`);
+          return multiScraper.aggregateResults(prodResults);
+        }
+      }
+    }
+  }
+  
+  // Strategy 6: Try key product words (ONLY common ones that work)
+  if (product.name) {
+    const keyWords = [
+      'חלב', 'לחם', 'ביצים', 'בשר', 'גבינה', 'יוגורט', 'מים', 'שמן', 'קפה', 'תה'
+    ];
+    
+    for (const keyWord of keyWords) {
+      if (product.name.includes(keyWord)) {
+        prodResults = await multiScraper.searchProduct(city, keyWord);
+        if (prodResults && prodResults.length > 0) {
+          console.log(`✅ Found results for "${product.name}" using key word: ${keyWord}`);
+          return multiScraper.aggregateResults(prodResults);
+        }
+      }
+    }
+  }
+  
+  console.log(`❌ No results found for "${product.name}" after trying optimized strategies`);
+  return [];
 }
 
 
@@ -349,7 +416,7 @@ router.post('/', async (req, res) => {
 router.post('/price', async (req, res) => {
   try {
     const { city, products } = req.body;
-    console.log('Received compare request:', { city, productsCount: products?.length });
+    console.log('🛒 Compare request:', { city, productsCount: products?.length });
     
     if (!city || !Array.isArray(products) || products.length === 0) {
       return res.status(400).json({ error: 'Missing city or products array. Please enter a valid city and add products to your list.' });
@@ -432,7 +499,44 @@ router.post('/price', async (req, res) => {
         }
         
         // Add this product's price to the store (only real prices)
-        const productPrice = storeData.itemPrices[prod.barcode] || 0;
+        // Try all the same search strategies that fetchCompare uses
+        let productPrice = 0;
+
+        // Strategy 1: Original barcode/name
+        productPrice = storeData.itemPrices[prod.barcode] || 0;
+        if (productPrice === 0 && prod.name) {
+          productPrice = storeData.itemPrices[prod.name] || 0;
+        }
+
+        // Strategy 2: Enhanced barcode handling
+        if (productPrice === 0 && /^\d+$/.test(prod.barcode)) {
+          if (prod.barcode.length < 13) {
+            productPrice = storeData.itemPrices[prod.barcode.padStart(13, '0')] || 0;
+          }
+          if (productPrice === 0 && prod.barcode.length === 13 && prod.barcode.startsWith('0')) {
+            productPrice = storeData.itemPrices[prod.barcode.replace(/^0+/, '')] || 0;
+          }
+        }
+
+        // Strategy 3: Enhanced name variations
+        if (productPrice === 0 && prod.name && !/^\d+$/.test(prod.name)) {
+          // Remove common suffixes like "800פג" from "תירס 800פג"
+          const cleanName = prod.name.replace(/\s+\d+.*$/, '').trim();
+          if (cleanName !== prod.name && cleanName.length >= 3) {
+            productPrice = storeData.itemPrices[cleanName] || 0;
+          }
+          
+          // Try brand name only (first word)
+          if (productPrice === 0) {
+            const words = prod.name.split(' ');
+            if (words.length > 1) {
+              const brandName = words[0];
+              if (brandName.length >= 2) {
+                productPrice = storeData.itemPrices[brandName] || 0;
+              }
+            }
+          }
+        }
         
         if (productPrice > 0) {
           // Only increment itemsFound if this is a new product (not already counted)
@@ -440,13 +544,13 @@ router.post('/price', async (req, res) => {
             allStoreResults[storeKey].foundBarcodes.push(prod.barcode);
           }
           
-          // Store individual item price
+          // Store individual item price using barcode as key for consistency
           allStoreResults[storeKey].itemPrices[prod.barcode] = productPrice;
           
           // Store product details including image
           allStoreResults[storeKey].productDetails[prod.barcode] = {
             name: prod.name,
-            img: prod.img,
+            img: prod.img || prod.image, // Check both img and image fields
             price: productPrice
           };
           
@@ -496,16 +600,24 @@ router.post('/price', async (req, res) => {
       const itemsFound = store.itemsFound;
       const totalPrice = store.totalPrice;
       
-      // Improved scoring formula - only positive scores
+      // OPTIMIZED scoring formula for better percentages
       const quantityScore = itemsFound / totalItems;
       const priceScore = totalPrice / maxPrice;
       
-      // Convert to positive percentage (0-100)
-      const rawScore = (0.7 * quantityScore) - (0.3 * priceScore);
+      // Better formula: 80% weight on quantity, 20% on price
+      const rawScore = (0.8 * quantityScore) - (0.2 * priceScore);
       const positiveScore = Math.max(0, rawScore) * 100;
       
-      store.score = Math.round(positiveScore); // Round to whole number
-      store.scorePercentage = `${store.score}%`; // Add percentage display
+      // Boost scores for stores with more items
+      let finalScore = Math.round(positiveScore);
+      if (itemsFound >= totalItems * 0.8) {
+        finalScore = Math.min(100, finalScore + 20); // Bonus for high availability
+      } else if (itemsFound >= totalItems * 0.5) {
+        finalScore = Math.min(100, finalScore + 10); // Bonus for medium availability
+      }
+      
+      store.score = finalScore;
+      store.scorePercentage = `${store.score}%`;
       
       // Add availability status for better UX
       if (itemsFound === totalItems) {

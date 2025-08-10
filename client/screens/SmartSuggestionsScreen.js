@@ -226,6 +226,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
 
   const fetchSmartSuggestions = async (category = 'all', customOffset = 0, reset = false) => {
     try {
+      console.log('🔄 Fetching smart suggestions for category:', category, 'GroupId:', groupId);
       setLoading(true);
       // For ALL, fetch random products from suggestions endpoint (like original)
       if (category === 'all') {
@@ -286,13 +287,13 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
             setSuggestions(productDetails);
             
             if (type === 'favorite') {
+              // For favorite tab, all items are favorites by definition
               const favoriteIds = new Set(productDetails.map(f => f.productId));
+              console.log('💖 Setting favorites from server response:', favoriteIds);
               setFavorites(favoriteIds);
             } else {
-              // OPTIMIZED: Only load favorites if on favorite tab
-              if (selectedSmartTab === 'favorite') {
-                await loadFavoritesStatus(productDetails);
-              }
+              // For other tabs, check which items are favorited
+              await loadFavoritesStatus(productDetails);
             }
           } catch (err) {
             console.error('Batch fetch failed, falling back to individual calls:', err);
@@ -374,21 +375,28 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         return;
       }
 
-      // Reduced logging for better performance
-      console.log('🔍 Toggle favorite:', productId);
+      console.log('🔍 Toggle favorite:', productId, 'GroupId:', groupId);
 
       const isFavorited = favorites.has(productId);
       if (isFavorited) {
         const response = await api.post('/suggestions/favorites/remove', { productId, groupId });
+        console.log('✅ Removed from favorites:', productId);
         
         setFavorites(prev => {
           const newSet = new Set(prev);
           newSet.delete(productId);
           return newSet;
         });
+        
+        // Remove item from suggestions list if we're on favorite tab
+        if (selectedMainTab === 'smart' && selectedSmartTab === 'favorite') {
+          setSuggestions(prev => prev.filter(item => item.productId !== productId && item._id !== productId));
+        }
+        
         showToast('Removed from favorites');
       } else {
         const response = await api.post('/suggestions/favorites/add', { productId, groupId });
+        console.log('✅ Added to favorites:', productId);
         
         setFavorites(prev => {
           const newSet = new Set(prev);
@@ -692,15 +700,11 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
   };
 
   const handleCardPress = (category) => {
-    if (category === 'favorite') {
-      navigation.navigate('Favorites');
-      return;
-    }
     if (category === 'seasonal' || category === 'popular') {
       showToast('Feature coming soon!');
       return;
     }
-    // Just set the selected category and fetch data - stay within this screen
+    // Set the selected category and fetch data - stay within this screen
     setSelectedCategory(category);
     fetchSmartSuggestions(category, 0, true);
   };

@@ -91,20 +91,16 @@ export default function GroupSharedListScreen({ route, navigation }) {
   };
 
   const handleCompare = () => {
-    // Clean console logging - only essential info
-    console.log(`🛒 Compare triggered for group: ${groupId}`);
-    console.log(`📦 Items in list: ${summary.currentList.length}`);
-    
     const products = summary.currentList
-      .filter(item => item.barcode && /^[0-9A-Za-z]+$/.test(item.barcode))
+      .filter(item => item && item.name) // Only filter for valid items with names
       .map(item => ({
-        barcode: item.barcode,
+        barcode: item.barcode || '', // Allow empty barcodes
         name: item.name,
         quantity: item.quantity || 1,
         image: item.img || item.icon // Add the image field
       }));
     
-    console.log(`✅ Sending ${products.length} products to store comparison`);
+    console.log(`🛒 Compare: ${products.length} products for group ${groupId}`);
     
     navigation.navigate('WhereToBuy', {
       products,
@@ -145,8 +141,26 @@ export default function GroupSharedListScreen({ route, navigation }) {
   );
 
   const renderItemCard = ({ item }) => {
-    const addedByName = item.addedBy && (item.addedBy.username || item.addedBy.name) ? (item.addedBy.username || item.addedBy.name) : 'Unknown';
-    const addedAt = item.createdAt ? new Date(item.createdAt).toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }) : '';
+    // For purchase history (lastBought), show who purchased it
+    // For current list, show who added it
+    const isPurchaseHistory = activeTab === 'lastBought' || selectedTrip;
+    
+    let displayName = 'Unknown';
+    let displayText = '';
+    let displayTime = '';
+    
+    if (isPurchaseHistory) {
+      // Purchase history - show who purchased
+      displayName = item.user && (item.user.username || item.user.name) ? (item.user.username || item.user.name) : 'Unknown';
+      displayText = `Purchased by ${displayName}`;
+      displayTime = item.boughtAt ? new Date(item.boughtAt).toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }) : '';
+    } else {
+      // Current list - show who added
+      displayName = item.addedBy && (item.addedBy.username || item.addedBy.name) ? (item.addedBy.username || item.addedBy.name) : 'Unknown';
+      displayText = `Added by ${displayName}`;
+      displayTime = item.createdAt ? new Date(item.createdAt).toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }) : '';
+    }
+    
     const imageSrc = item.img || item.icon;
     return (
       <Swipeable renderRightActions={() => renderRightActions(item)}>
@@ -160,7 +174,7 @@ export default function GroupSharedListScreen({ route, navigation }) {
           />
           <View style={styles.rowContent}>
             <Text style={styles.rowProductName} numberOfLines={1}>{item.name}</Text>
-            <Text style={styles.rowMeta} numberOfLines={1}>Added by {addedByName}{addedAt ? ` at ${addedAt}` : ''}</Text>
+            <Text style={styles.rowMeta} numberOfLines={1}>{displayText}{displayTime ? ` at ${displayTime}` : ''}</Text>
           </View>
         </View>
       </Swipeable>

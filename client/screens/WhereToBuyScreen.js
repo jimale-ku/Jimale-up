@@ -3,11 +3,13 @@ import { View, Text, TouchableOpacity, TextInput, FlatList, ActivityIndicator, S
 import * as Location from 'expo-location';
 import LottieView from 'lottie-react-native';
 import { Ionicons } from '@expo/vector-icons';
+
 import api from '../services/api';
 import PersonalListContext from '../services/PersonalListContext';
 
 const WhereToBuyScreen = ({ route, navigation }) => {
-  const { products, source, tripType, groupId, currentUserId, groupCreatorId } = route.params || {};
+  const { products: routeProducts, source, tripType, groupId, currentUserId, groupCreatorId } = route.params || {};
+  const [products, setProducts] = useState(routeProducts || []);
   console.log('WhereToBuyScreen params:', route.params);
   const [locationMethod, setLocationMethod] = useState(null); // 'gps' or 'manual'
   const [city, setCity] = useState('');
@@ -105,7 +107,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
     setStores([]);
     try {
       // Replace with your actual backend endpoint
-      const response = await fetch('http://192.168.0.102:5000/api/compare/price', {
+      const response = await fetch('http://192.168.100.41:5000/api/compare/price', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -114,20 +116,14 @@ const WhereToBuyScreen = ({ route, navigation }) => {
             barcode: p.barcode,
             name: p.name,
             quantity: p.quantity || 1,
-            image: p.image // Add the image field
+            image: p.image // Keep image data for display
           })),
           source,
         }),
       });
       if (!response.ok) throw new Error('Failed to fetch stores');
       const data = await response.json();
-      console.log('Store data:', data);
-      console.log('Products with images:', products.map(p => ({ barcode: p.barcode, name: p.name, hasImage: !!p.image })));
-      
-      // Debug: Check if scores are present
-      if (Array.isArray(data)) {
-        console.log('Scores in response:', data.map(store => ({ branch: store.branch, score: store.score })));
-      }
+      console.log('Store data received:', Array.isArray(data) ? `${data.length} stores` : 'No stores found');
       
       setStores(Array.isArray(data) ? data.slice(0, 5) : (data.stores?.slice(0, 5) || []));
     } catch (e) {
@@ -141,12 +137,34 @@ const WhereToBuyScreen = ({ route, navigation }) => {
     console.log('Buy button pressed', { tripType, selectedStore });
     if (tripType === 'group' && groupId) {
       try {
+        // Get the products that were actually found/bought from this store
+        const foundBarcodes = selectedStore.foundBarcodes || [];
+        const boughtProducts = products.filter(p => foundBarcodes.includes(p.barcode));
+        
+        console.log('Products to mark as bought:', boughtProducts.map(p => p.name));
+        console.log('Products that will be lost:', products.filter(p => !foundBarcodes.includes(p.barcode)).map(p => p.name));
+        
+        // Get the scraped product details (including images) from the store data
+        const boughtProductsWithDetails = boughtProducts.map(p => {
+          const scrapedDetails = selectedStore.productDetails?.[p.barcode];
+          return {
+            _id: p._id,
+            barcode: p.barcode,
+            name: scrapedDetails?.name || p.name,
+            quantity: p.quantity || 1,
+            img: scrapedDetails?.img || p.img,
+            icon: scrapedDetails?.icon || p.icon,
+            productId: p.productId || p.product || null
+          };
+        });
+        
         await api.post(`/groups/${groupId}/list/complete-trip`, {
           store: {
             branch: selectedStore.branch,
             address: selectedStore.address,
             totalPrice: selectedStore.totalPrice ?? selectedStore.price ?? null,
-          }
+          },
+          boughtProducts: boughtProductsWithDetails
         });
         console.log('Setting showCelebration to true');
         setShowCelebration(true);
@@ -161,11 +179,25 @@ const WhereToBuyScreen = ({ route, navigation }) => {
     } else if (tripType === 'personal') {
       console.log('Personal trip buy logic triggered');
       try {
+        // Get the products that were actually found/bought from this store
+        const foundBarcodes = selectedStore.foundBarcodes || [];
+        const boughtProducts = products.filter(p => foundBarcodes.includes(p.barcode));
+        
+        // Ensure bought products have image data
+        const boughtProductsWithImages = boughtProducts.map(product => ({
+          ...product,
+          img: product.image || product.img || product.icon, // Preserve image data
+          icon: product.image || product.img || product.icon, // Backup image field
+        }));
+        
+        console.log('Personal trip - Products to mark as bought:', boughtProductsWithImages.map(p => p.name));
+        console.log('Personal trip - Products that will be lost:', products.filter(p => !foundBarcodes.includes(p.barcode)).map(p => p.name));
+        
         completeTrip({
           branch: selectedStore.branch || selectedStore.storeName,
           address: selectedStore.address,
           totalPrice: selectedStore.totalPrice ?? selectedStore.price ?? null,
-        });
+        }, boughtProductsWithImages);
         console.log('Navigating to TransitionScreenPersonal');
         navigation.replace('TransitionScreenPersonal');
       } catch (err) {
@@ -220,9 +252,9 @@ const WhereToBuyScreen = ({ route, navigation }) => {
           <View style={styles.storeInfo}>
             <Text style={styles.storeName}>{item.branch}</Text>
             <Text style={styles.storeDetail}>כתובת: {item.address}</Text>
-            <Text style={styles.storeDetail}>מחיר אמיתי: ₪{formatPrice(item.totalPrice ?? item.price ?? 'N/A')}</Text>
-            <Text style={styles.storeDetail}>מוצרים אמיתיים: {item.realPriceCount || 0}</Text>
-            <Text style={styles.storeDetail}>מוצרים משוערים: {item.estimatedPriceCount || 0}</Text>
+            <Text style={styles.storeDetail}>מחיר כולל: ₪{formatPrice(item.totalPrice ?? item.price ?? 'N/A')}</Text>
+            <Text style={styles.storeDetail}>מוצרים עם מחירים: {item.productsWithPrices || item.itemsFound || 0}</Text>
+            <Text style={styles.storeDetail}>מוצרים שנמצאו: {item.productsScraped || item.totalProductsScraped || 0}</Text>
             <Text style={styles.storeScore}>Score: {item.scorePercentage || item.score || 'N/A'}</Text>
             {item.availability && (
               <Text style={styles.availabilityText}>{item.availability}</Text>

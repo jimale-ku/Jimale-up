@@ -25,10 +25,7 @@ app.set('io', io);
 app.use((req, res, next) => {
   // Only log non-asset requests and avoid logging product data
   if (!req.url.includes('/api/products') || req.method !== 'GET') {
-    // Only log errors and important requests
-    if (req.method !== 'GET' || req.url.includes('/api/auth') || req.url.includes('/api/compare')) {
-      console.log(`${req.method} ${req.url}`);
-    }
+    console.log(`${req.method} ${req.url}`);
   }
   next();
 });
@@ -94,9 +91,16 @@ const initializeMLModel = async () => {
     }
 
     console.log('🤖 Initializing ML model...');
+    console.time('ML model training duration');
     const { trainModel } = require('./services/ml/predictPurchases');
     await trainModel();
-    console.log('✅ ML model training complete');
+    console.timeEnd('ML model training duration');
+
+    if (latest) {
+      console.log('✅ ML model retraining complete');
+    } else {
+      console.log('✅ ML model initial training complete');
+    }
   } catch (err) {
     console.error('❌ Error initializing ML model:', err.message);
     console.log('⚠️  ML model will use default weights');
@@ -105,18 +109,12 @@ const initializeMLModel = async () => {
 
 // Socket.IO event handlers
 io.on('connection', (socket) => {
-  // Only log socket connections in development
-  if (process.env.NODE_ENV === 'development') {
-    console.log('🔌 Socket connected:', socket.id);
-  }
+  console.log('🔌 Socket connected:', socket.id);
 
   // Handle group joining
   socket.on('joinGroup', (groupId) => {
     socket.join(groupId);
-    // Only log in development
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`👥 Socket ${socket.id} joined group: ${groupId}`);
-    }
+    console.log(`👥 Socket ${socket.id} joined group: ${groupId}`);
     // Send confirmation to client
     socket.emit('joinedGroup', { groupId, socketId: socket.id });
   });
@@ -150,7 +148,7 @@ server.listen(PORT, () => {
   // Get custom branding from environment variables or use defaults
   const APP_NAME = process.env.APP_NAME || 'SmartBuy';
   const DEVELOPER_NAME = process.env.DEVELOPER_NAME || 'Your Name';
-  const NETWORK_IP = process.env.NETWORK_IP || '192.168.0.102';
+  const NETWORK_IP = process.env.NETWORK_IP || '192.168.100.41';
   
   console.log(`🚀 ${APP_NAME} Server Started`);
   console.log(`👨‍💻 Developer: ${DEVELOPER_NAME}`);

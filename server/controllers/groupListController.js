@@ -25,9 +25,7 @@ exports.getGroupListSummary = async (req, res) => {
     const currentList = group.list.items
       .filter(item => 
         item && 
-        item.name && 
-        item.barcode && 
-        /^[0-9A-Za-z]+$/.test(item.barcode)
+        item.name // Only require name, allow items without barcodes
       )
       .map(item => ({
         _id: item._id,
@@ -71,6 +69,13 @@ exports.getGroupListSummary = async (req, res) => {
         tripId: lastTrip._id 
       }).populate('user', 'username');
       
+      // Debug: Log the user data
+      console.log('[DEBUG] Last bought items:', lastBought.map(item => ({
+        name: item.name,
+        user: item.user,
+        img: item.img ? 'Has image' : 'No image'
+      })));
+      
       lastStore = lastTrip.store;
       currentTripNumber = lastTrip.tripNumber;
     }
@@ -104,7 +109,7 @@ exports.completeGroupTrip = async (req, res) => {
   try {
     const groupId = req.params.groupId;
     const userId = req.userId;
-    const { store } = req.body || {};
+    const { store, boughtProducts } = req.body || {};
     
     const group = await Group.findById(groupId).populate({
       path: 'list',
@@ -121,6 +126,17 @@ exports.completeGroupTrip = async (req, res) => {
     if (!items.length) {
       return res.status(400).json({ message: 'No items to complete trip' });
     }
+    
+    // If boughtProducts is provided, use only those items for "Last Bought"
+    // Otherwise, fall back to the old behavior (all items)
+    const itemsToProcess = boughtProducts && boughtProducts.length > 0 
+      ? boughtProducts 
+      : items;
+    
+    console.log(`[DEBUG] Completing trip for group ${groupId}`);
+    console.log(`[DEBUG] Total items in list: ${items.length}`);
+    console.log(`[DEBUG] Items to mark as bought: ${itemsToProcess.length}`);
+    console.log(`[DEBUG] Items that will be lost: ${items.length - itemsToProcess.length}`);
 
     // Get next trip number for this group
     const lastTrip = await TripHistory.findOne({ group: groupId })
@@ -145,28 +161,39 @@ exports.completeGroupTrip = async (req, res) => {
         user: userId,
         username: user?.username || 'Unknown'
       }],
-      itemCount: items.length,
+      itemCount: itemsToProcess.length,
       totalSpent: store?.totalPrice ? parseFloat(store.totalPrice) : 0,
     });
 
-    // Record each item in PurchaseHistory with trip reference
+    // Record each bought item in PurchaseHistory with trip reference
     const now = new Date();
-    for (const item of items) {
+    console.log('[DEBUG] User ID for purchase:', userId);
+    console.log('[DEBUG] User info:', user);
+    
+    for (const boughtItem of itemsToProcess) {
+      console.log('[DEBUG] Creating purchase record for:', {
+        name: boughtItem.name,
+        img: boughtItem.img ? 'Has image' : 'No image',
+        icon: boughtItem.icon ? 'Has icon' : 'No icon'
+      });
+      
       await PurchaseHistory.create({
-        name: item.name,
-        product: item.product,
-        quantity: item.quantity,
+        name: boughtItem.name,
+        product: boughtItem.productId || boughtItem.product || null, // Handle both product ID and product object
+        quantity: boughtItem.quantity,
         user: userId,
         group: groupId,
         tripId: tripHistory._id,
         boughtAt: now,
-        img: item.img || item.icon || '', // Save image for last bought
+        img: boughtItem.img || boughtItem.icon || '', // Save image for last bought
         metadata: store ? { store } : {},
       });
-      await Item.findByIdAndDelete(item._id);
     }
 
-    // Clear the list
+    // Clear the entire list (all items are lost, only bought items go to "Last Bought")
+    for (const item of items) {
+      await Item.findByIdAndDelete(item._id);
+    }
     list.items = [];
     await list.save();
     
