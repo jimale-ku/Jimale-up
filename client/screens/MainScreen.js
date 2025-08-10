@@ -156,25 +156,76 @@ export default function MainScreen({ navigation }) {
     getUserName();
   }, []);
 
-  // Filter products based on search term
+  // Server-side search functionality
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+
+  // Debounced search to avoid excessive API calls
   useEffect(() => {
-    if (searchTerm.trim() === '') {
-      setFilteredProducts(products);
-    } else {
+    const timeoutId = setTimeout(() => {
+      if (searchTerm.trim() === '') {
+        // Reset to normal pagination when search is cleared
+        setFilteredProducts(products);
+        setSearchResults([]);
+        // Reset pagination state
+        setOffset(products.length);
+        setHasMore(true);
+        console.log('🔍 Search cleared, reset to pagination mode');
+      } else {
+        performSearch(searchTerm);
+      }
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm, products]);
+
+  const performSearch = async (query) => {
+    try {
+      setSearchLoading(true);
+      console.log('🔍 Searching for:', query);
+      
+      // Search the database directly using the products endpoint
+      const response = await api.get(`/products?q=${encodeURIComponent(query)}&limit=100`);
+      const searchResults = response.data || [];
+      
+      console.log('🔍 Search results:', searchResults.length, 'products found');
+      
+      // Filter to only show products with valid images
+      const validResults = searchResults.filter(product => {
+        const img = product.img || product.image;
+        return img && img !== '' && img !== 'https://via.placeholder.com/100' && img !== 'null';
+      });
+      
+      setSearchResults(validResults);
+      setFilteredProducts(validResults);
+      setSearchLoading(false);
+    } catch (error) {
+      console.error('Error searching products:', error);
+      setSearchLoading(false);
+      // Fallback to client-side filtering if server search fails
       const filtered = products.filter(product =>
-        product.name.toLowerCase().includes(searchTerm.toLowerCase())
+        product.name.toLowerCase().includes(query.toLowerCase())
       );
       setFilteredProducts(filtered);
     }
-  }, [searchTerm, products]);
+  };
 
   // Fetch products from /api/products on mount - OPTIMIZED for performance
   const fetchProducts = useCallback(async (reset = false) => {
+    // Don't fetch more products if we're currently searching
+    if (searchTerm.trim()) {
+      return;
+    }
+    
     setIsLoading(true);
     try {
-      // Reduced initial load from 50 to 20 for faster loading
+      console.log('📦 Fetching products:', reset ? 'initial' : 'pagination', 'offset:', reset ? 0 : offset);
+      
+      // Fetch products with pagination
       const res = await api.get(`/products?limit=20&offset=${reset ? 0 : offset}`);
       const products = res.data || [];
+      
+      console.log('📦 Received products:', products.length);
       
       // Filter to only show products with valid images (same as ALL card)
       const validProducts = products.filter(product => {
@@ -182,32 +233,47 @@ export default function MainScreen({ navigation }) {
         return img && img !== '' && img !== 'https://via.placeholder.com/100' && img !== 'null';
       });
       
+      console.log('📦 Valid products:', validProducts.length);
+      
       if (reset) {
         setProducts(validProducts);
         setFilteredProducts(validProducts);
-        setOffset(20); // Reduced from 50 to 20
+        setOffset(20);
         setHasMore(validProducts.length === 20);
+        console.log('📦 Reset: loaded', validProducts.length, 'products, hasMore:', validProducts.length === 20);
       } else {
         setProducts(prev => [...prev, ...validProducts]);
         setFilteredProducts(prev => [...prev, ...validProducts]);
-        setOffset(prev => prev + 20); // Reduced from 50 to 20
+        setOffset(prev => prev + 20);
         setHasMore(validProducts.length === 20);
+        console.log('📦 Pagination: added', validProducts.length, 'products, total:', products.length + validProducts.length, 'hasMore:', validProducts.length === 20);
       }
     } catch (err) {
+      console.error('❌ Error fetching products:', err);
       setHasMore(false);
     }
     setIsLoading(false);
-  }, [offset]);
+  }, [offset, searchTerm]);
 
   // On mount, fetch first 20 products
   useEffect(() => {
     fetchProducts(true);
   }, []);
 
-  // On scroll to end, fetch more products
+  // On scroll to end, fetch more products (Instagram-style infinite scroll)
   const handleEndReached = () => {
-    if (!isLoading && hasMore) {
+    console.log('📜 End reached - isLoading:', isLoading, 'hasMore:', hasMore, 'searchTerm:', searchTerm.trim());
+    
+    // Only fetch more if not searching and not already loading
+    if (!isLoading && hasMore && !searchTerm.trim()) {
+      console.log('📜 Fetching more products...');
       fetchProducts();
+    } else if (searchTerm.trim()) {
+      console.log('📜 Skipping pagination - currently searching');
+    } else if (isLoading) {
+      console.log('📜 Skipping pagination - already loading');
+    } else if (!hasMore) {
+      console.log('📜 Skipping pagination - no more products');
     }
   };
 
@@ -377,7 +443,10 @@ export default function MainScreen({ navigation }) {
             onChangeText={setSearchTerm}
             placeholderTextColor="#999"
           />
-          {searchTerm.length > 0 && (
+          {searchLoading && (
+            <ActivityIndicator size="small" color="#2E7D32" style={styles.searchLoading} />
+          )}
+          {searchTerm.length > 0 && !searchLoading && (
             <TouchableOpacity onPress={() => setSearchTerm('')}>
               <Ionicons name="close-circle" size={20} color="#666" />
             </TouchableOpacity>
@@ -399,20 +468,43 @@ export default function MainScreen({ navigation }) {
           contentContainerStyle={styles.productsList}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <Ionicons name="search-outline" size={48} color="#CCC" />
-              <Text style={styles.emptyText}>No products found</Text>
-              <Text style={styles.emptySubtext}>Try adjusting your search</Text>
+              {searchTerm.trim() ? (
+                <>
+                  <Ionicons name="search-outline" size={48} color="#CCC" />
+                  <Text style={styles.emptyText}>No products found for "{searchTerm}"</Text>
+                  <Text style={styles.emptySubtext}>Try a different search term</Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="search-outline" size={48} color="#CCC" />
+                  <Text style={styles.emptyText}>No products found</Text>
+                  <Text style={styles.emptySubtext}>Try adjusting your search</Text>
+                </>
+              )}
             </View>
           }
           ListFooterComponent={
-            isLoading && offset > 50 ? (
-              <View style={{ paddingVertical: 16 }}>
+            isLoading && !searchTerm.trim() ? (
+              <View style={styles.loadingFooter}>
                 <ActivityIndicator size="small" color="#2E7D32" />
+                <Text style={styles.loadingFooterText}>Loading more products...</Text>
+              </View>
+            ) : !hasMore && !searchTerm.trim() && filteredProducts.length > 0 ? (
+              <View style={styles.endFooter}>
+                <Text style={styles.endFooterText}>You've reached the end! 🎉</Text>
+                <Text style={styles.endFooterSubtext}>All products loaded</Text>
               </View>
             ) : null
           }
           onEndReached={handleEndReached}
-          onEndReachedThreshold={0.5}
+          onEndReachedThreshold={0.3}
+          refreshing={isLoading && filteredProducts.length === 0}
+          onRefresh={() => {
+            console.log('🔄 Pull to refresh triggered');
+            setOffset(0);
+            setHasMore(true);
+            fetchProducts(true);
+          }}
         />
       </View>
 
@@ -568,6 +660,9 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 16,
     color: '#333',
+  },
+  searchLoading: {
+    marginLeft: 10,
   },
   productsSection: {
     flex: 1,
@@ -896,5 +991,32 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
     fontWeight: '500',
+  },
+  loadingFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+  },
+  loadingFooterText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#666',
+  },
+  endFooter: {
+    alignItems: 'center',
+    paddingVertical: 30,
+    paddingHorizontal: 16,
+  },
+  endFooterText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2E7D32',
+    marginBottom: 4,
+  },
+  endFooterSubtext: {
+    fontSize: 14,
+    color: '#999',
   },
 });

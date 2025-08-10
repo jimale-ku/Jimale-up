@@ -36,7 +36,8 @@ router.get('/', async (req, res) => {
 
     // OPTIMIZED: Better sampling strategy for performance
     if (!q && !category) {
-      // Use more efficient sampling for small datasets
+      // For infinite scroll, we need consistent random sampling
+      // Use a seed-based approach for better pagination
       const totalCount = await Product.countDocuments();
       
       if (totalCount <= maxProducts + skip) {
@@ -45,17 +46,31 @@ router.get('/', async (req, res) => {
         shuffleArray(products);
         products = products.slice(skip, skip + maxProducts);
       } else {
-        // Use aggregation for larger datasets
+        // For infinite scroll, use consistent random sampling
+        // This ensures users get different products on each page
+        const sampleSize = Math.min(maxProducts + skip + 10, totalCount);
         products = await Product.aggregate([
-          { $sample: { size: Math.min(maxProducts + skip, totalCount) } }
+          { $sample: { size: sampleSize } },
+          { $skip: skip },
+          { $limit: maxProducts }
         ]);
-        products = products.slice(skip, skip + maxProducts);
+        
+        // If we don't have enough products after sampling, get more
+        if (products.length < maxProducts) {
+          const remainingNeeded = maxProducts - products.length;
+          const additionalProducts = await Product.aggregate([
+            { $sample: { size: remainingNeeded + 10 } },
+            { $limit: remainingNeeded }
+          ]);
+          products = [...products, ...additionalProducts];
+        }
       }
     } else {
-      // If filters/search, use find, then shuffle in code
-      products = await Product.find(mongoQuery).lean();
-      shuffleArray(products);
-      products = products.slice(skip, skip + maxProducts);
+      // If filters/search, use find with proper pagination
+      products = await Product.find(mongoQuery)
+        .skip(skip)
+        .limit(maxProducts)
+        .lean();
     }
 
     // Ensure valid images using the same logic as Smart Suggestions

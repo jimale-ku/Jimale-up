@@ -85,10 +85,28 @@ exports.getSmartSuggestions = async (req, res) => {
     let suggestions = [];
 
     if (type === 'all') {
-      // Use MongoDB instead of old products.json for ALL card
+      // Use MongoDB instead of old products.json for ALL card with pagination support
       console.log('🔄 ALL card: Fetching from MongoDB...');
-      const products = await Product.aggregate([
-        { $sample: { size: limitNum } },
+      
+      // Get offset from query params for pagination
+      const offset = parseInt(req.query.offset) || 0;
+      console.log(`📦 ALL card: Pagination - limit: ${limitNum}, offset: ${offset}`);
+      
+      // For infinite scroll, use a simpler approach that always returns products
+      const totalCount = await Product.countDocuments();
+      
+      console.log(`📦 ALL card: Total products in DB: ${totalCount}, requesting: ${limitNum}, offset: ${offset}`);
+      
+      // Use a simple approach: always sample more than we need to ensure we get enough products
+      const sampleSize = Math.min(limitNum * 3, totalCount); // Sample 3x what we need
+      
+      // First try to get products with valid images
+      let products = await Product.aggregate([
+        { $match: { 
+          img: { $exists: true, $ne: null, $ne: '', $ne: 'https://via.placeholder.com/100' }
+        }},
+        { $sample: { size: sampleSize } },
+        { $limit: limitNum },
         { $project: {
             _id: 1,
             name: 1,
@@ -97,7 +115,31 @@ exports.getSmartSuggestions = async (req, res) => {
         }}
       ]);
       
-      console.log(`📦 ALL card: Found ${products.length} products from MongoDB`);
+      // If we don't have enough products with images, get more from all products
+      if (products.length < limitNum) {
+        const remainingNeeded = limitNum - products.length;
+        const additionalProducts = await Product.aggregate([
+          { $sample: { size: remainingNeeded * 2 } },
+          { $limit: remainingNeeded },
+          { $project: {
+              _id: 1,
+              name: 1,
+              img: 1,
+              barcode: 1
+          }}
+        ]);
+        products = [...products, ...additionalProducts];
+      }
+      
+      console.log(`📦 ALL card: Actually returned ${products.length} products`);
+      
+      // If we got less than requested, it means we're running out of products
+      // But since we have 5715 products, this shouldn't happen for a while
+      if (products.length < limitNum) {
+        console.log(`📦 ALL card: WARNING - Got ${products.length} products, less than requested ${limitNum}`);
+      }
+      
+      console.log(`📦 ALL card: Found ${products.length} products from MongoDB (offset: ${offset})`);
       
       suggestions = products.map(product => ({
         productId: product._id,

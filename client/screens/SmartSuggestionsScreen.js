@@ -166,11 +166,12 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       } else {
         // Reset to normal pagination when search is cleared
         setFilteredSuggestions([]);
-        setSuggestions([]);
-        setOffset(0);
+        // Don't reset suggestions - keep the loaded products for infinite scrolling
+        // setSuggestions([]); // REMOVED - this was causing the issue
+        setOffset(suggestions.length); // Set offset to current loaded count
         setHasMore(true);
-        setLoadedProductIds(new Set());
-        fetchSmartSuggestions('all', 0, true);
+        setLoadedProductIds(new Set(suggestions.map(p => p.productId || p._id)));
+        console.log('🔍 ALL card: Search cleared, returning to pagination mode with', suggestions.length, 'loaded products');
       }
     }
   }, [debouncedSearchTerm, selectedMainTab]);
@@ -228,29 +229,41 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
     try {
       console.log('🔄 Fetching smart suggestions for category:', category, 'GroupId:', groupId);
       setLoading(true);
-      // For ALL, fetch random products from suggestions endpoint (like original)
+      
+      // For ALL, use the exact same logic as MainScreen
       if (category === 'all') {
-        const response = await api.get(`/suggestions/smart?type=all&limit=50&groupId=${groupId || 'user'}`);
-        const allProducts = response.data.suggestions || [];
+        // Don't fetch more products if we're currently searching
+        if (searchTerm.trim()) {
+          setLoading(false);
+          return;
+        }
         
-        // Filter to only show products with valid images
-        const newProducts = allProducts.filter(product => {
+        console.log('📦 ALL card: Fetching products:', reset ? 'initial' : 'pagination', 'offset:', reset ? 0 : customOffset);
+        
+        // Use the exact same API call as MainScreen
+        const res = await api.get(`/products?limit=20&offset=${reset ? 0 : customOffset}`);
+        const allProducts = res.data || [];
+        
+        console.log('📦 ALL card: Received products:', allProducts.length);
+        
+        // Filter to only show products with valid images (same as MainScreen)
+        const validProducts = allProducts.filter(product => {
           const img = product.img || product.image;
           return img && img !== '' && img !== 'https://via.placeholder.com/100' && img !== 'null';
         });
         
+        console.log('📦 ALL card: Valid products:', validProducts.length);
+        
         if (reset) {
-          // Reset mode: replace all items
-          setSuggestions(newProducts);
-          setLoadedProductIds(new Set(newProducts.map(p => p.productId || p._id)));
-          setOffset(50);
-          setHasMore(newProducts.length === 50);
+          setSuggestions(validProducts);
+          setOffset(20);
+          setHasMore(validProducts.length === 20);
+          console.log('📦 ALL card: Reset: loaded', validProducts.length, 'products, hasMore:', validProducts.length === 20);
         } else {
-          // Append mode: add new items to existing ones (Instagram-like)
-          setSuggestions(prev => [...prev, ...newProducts]);
-          setLoadedProductIds(prev => new Set([...prev, ...newProducts.map(p => p.productId || p._id)]));
-          setOffset(prev => prev + 50);
-          setHasMore(newProducts.length === 50);
+          setSuggestions(prev => [...prev, ...validProducts]);
+          setOffset(prev => prev + 20);
+          setHasMore(validProducts.length === 20);
+          console.log('📦 ALL card: Pagination: added', validProducts.length, 'products, total:', suggestions.length + validProducts.length, 'hasMore:', validProducts.length === 20);
         }
         
         setLoading(false);
@@ -809,13 +822,22 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
     );
   };
 
-  // Infinite scroll for ALL card
+  // Infinite scroll for ALL card (Instagram-style)
   const handleEndReached = () => {
-    if (selectedMainTab === 'all' && hasMore && !loading && !searchTerm.trim()) {
-      // Only load more if not searching and there are more items
-      const nextOffset = offset + 50;
-      setOffset(nextOffset);
-      fetchSmartSuggestions('all', nextOffset, false);
+    console.log('📜 ALL card: End reached - loading:', loading, 'hasMore:', hasMore, 'searchTerm:', searchTerm.trim());
+    
+    // Only fetch more if we're on ALL tab, not searching, not already loading, and have more items
+    if (selectedMainTab === 'all' && !loading && hasMore && !searchTerm.trim()) {
+      console.log('📜 ALL card: Fetching more products...');
+      fetchSmartSuggestions('all', offset, false);
+    } else if (selectedMainTab !== 'all') {
+      console.log('📜 ALL card: Skipping pagination - not on ALL tab');
+    } else if (searchTerm.trim()) {
+      console.log('📜 ALL card: Skipping pagination - currently searching');
+    } else if (loading) {
+      console.log('📜 ALL card: Skipping pagination - already loading');
+    } else if (!hasMore) {
+      console.log('📜 ALL card: Skipping pagination - no more products');
     }
   };
 
@@ -931,10 +953,22 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
           fetchSmartSuggestions(currentCategory, 0, true);
         }}
         onEndReached={handleEndReached}
-        onEndReachedThreshold={0.5}
-        ListFooterComponent={loading && suggestions.length > 0 ? (
-          <ActivityIndicator size="small" color="#2E7D32" style={{ padding: 20 }} />
-        ) : null}
+        onEndReachedThreshold={0.3}
+        ListFooterComponent={
+          loading && !searchTerm.trim() && selectedMainTab === 'all' ? (
+            <View style={styles.loadingFooter}>
+              <ActivityIndicator size="small" color="#2E7D32" />
+              <Text style={styles.loadingFooterText}>Loading more products...</Text>
+            </View>
+          ) : null
+        }
+        refreshing={loading && suggestions.length === 0}
+        onRefresh={() => {
+          console.log('🔄 ALL card: Pull to refresh triggered');
+          setOffset(0);
+          setHasMore(true);
+          fetchSmartSuggestions('all', 0, true);
+        }}
         maintainVisibleContentPosition={{
           minIndexForVisible: 0,
           autoscrollToTopThreshold: 10,
@@ -1289,6 +1323,33 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#666',
+  },
+  loadingFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+  },
+  loadingFooterText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#666',
+  },
+  endFooter: {
+    alignItems: 'center',
+    paddingVertical: 30,
+    paddingHorizontal: 16,
+  },
+  endFooterText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2E7D32',
+    marginBottom: 4,
+  },
+  endFooterSubtext: {
+    fontSize: 14,
+    color: '#999',
   },
 
 });
