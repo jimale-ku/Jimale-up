@@ -65,7 +65,7 @@ app.get('/api/groups/my', (req, res) => {
 // });
 
 // Connect to MongoDB
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://ibrahimkhalif22031:Allah22031@ibrahim.cfpeif6.mongodb.net/smartbuy?retryWrites=true&w=majority';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://Khalid211:khalidkind211@cluster0.r7gzuda.mongodb.net/test?retryWrites=true&w=majority&appName=Cluster0';
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-for-smart-buy-app-2024';
 
 // Set JWT_SECRET globally so authController can access it
@@ -111,12 +111,35 @@ const initializeMLModel = async () => {
 io.on('connection', (socket) => {
   console.log('🔌 Socket connected:', socket.id);
 
-  // Handle group joining
-  socket.on('joinGroup', (groupId) => {
-    socket.join(groupId);
-    console.log(`👥 Socket ${socket.id} joined group: ${groupId}`);
-    // Send confirmation to client
-    socket.emit('joinedGroup', { groupId, socketId: socket.id });
+  // Handle group joining with verification
+  socket.on('joinGroup', async (groupId) => {
+    try {
+      console.log(`👥 User ${socket.id} attempting to join group: ${groupId}`);
+      
+      // Store groupId in socket for later use
+      socket.groupId = groupId;
+      socket.join(groupId);
+      
+      console.log(`👥 Socket ${socket.id} joined group: ${groupId}`);
+      
+      // Send confirmation to client
+      socket.emit('joinedGroup', { groupId, socketId: socket.id });
+      
+      // Also join the group's list room if available
+      try {
+        const Group = require('./models/Group');
+        const group = await Group.findById(groupId).populate('list');
+        if (group && group.list) {
+          socket.join(group.list._id.toString());
+          console.log(`📋 Socket ${socket.id} also joined list room: ${group.list._id}`);
+        }
+      } catch (err) {
+        console.log(`⚠️ Could not join list room for group ${groupId}:`, err.message);
+      }
+    } catch (err) {
+      console.error(`❌ Error joining group ${groupId}:`, err.message);
+      socket.emit('joinGroupError', { groupId, error: err.message });
+    }
   });
 
   // Handle list joining
@@ -125,10 +148,34 @@ io.on('connection', (socket) => {
     console.log(`📋 Socket ${socket.id} joined list: ${listId}`);
   });
 
-  // Handle list updates
-  socket.on('listUpdate', ({ listId }) => {
-    console.log(`📢 Broadcasting update to list ${listId}`);
-    io.to(listId).emit('listUpdate', { listId, timestamp: Date.now() });
+  // Handle list updates with improved broadcasting
+  socket.on('listUpdate', (data) => {
+    const { listId, groupId, action, itemName } = data;
+    console.log(`📢 Broadcasting update to list ${listId} and group ${groupId}`);
+    console.log(`📢 Action: ${action}, Item: ${itemName || 'N/A'}`);
+    
+    // Emit to both list room and group room for comprehensive coverage
+    if (listId) {
+      io.to(listId).emit('listUpdate', { 
+        listId, 
+        groupId, 
+        action,
+        itemName,
+        timestamp: Date.now()
+      });
+      console.log(`📢 Emitted to list room: ${listId}`);
+    }
+    
+    if (groupId) {
+      io.to(groupId).emit('listUpdate', { 
+        listId, 
+        groupId, 
+        action,
+        itemName,
+        timestamp: Date.now()
+      });
+      console.log(`📢 Emitted to group room: ${groupId}`);
+    }
   });
 
   socket.on('disconnect', () => {
@@ -148,12 +195,13 @@ server.listen(PORT, () => {
   // Get custom branding from environment variables or use defaults
   const APP_NAME = process.env.APP_NAME || 'SmartBuy';
   const DEVELOPER_NAME = process.env.DEVELOPER_NAME || 'Your Name';
-  const NETWORK_IP = process.env.NETWORK_IP || '192.168.100.41';
+  const NETWORK_IP = process.env.NETWORK_IP || '172.20.10.6';
   
   console.log(`🚀 ${APP_NAME} Server Started`);
   console.log(`👨‍💻 Developer: ${DEVELOPER_NAME}`);
   console.log(`📍 Port: ${PORT}`);
   console.log(`🔗 Local: http://localhost:${PORT}`);
+  
   console.log(`🌐 Network: http://${NETWORK_IP}:${PORT}`);
   console.log('📱 QR Code will appear below for mobile testing');
   console.log('─'.repeat(50));

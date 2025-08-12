@@ -182,11 +182,21 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       setLoading(true);
       setFilteredSuggestions([]);
       
-      // Search the database directly using the existing products endpoint
-      const response = await api.get(`/products?q=${encodeURIComponent(searchQuery)}&limit=100`);
+      // Search the ENTIRE database with higher limit for comprehensive results
+      const response = await api.get(`/products?q=${encodeURIComponent(searchQuery)}&limit=500`);
       const searchResults = response.data || [];
       
-      setFilteredSuggestions(searchResults);
+      console.log('🔍 SmartSuggestions search results:', searchResults.length, 'products found');
+      
+      // Filter to only show products with valid images (same as MainScreen)
+      const validResults = searchResults.filter(product => {
+        const img = product.img || product.image;
+        return img && img !== '' && img !== 'https://via.placeholder.com/100' && img !== 'null';
+      });
+      
+      console.log('🔍 SmartSuggestions valid results after image filtering:', validResults.length, 'products');
+      
+      setFilteredSuggestions(validResults);
       setLoading(false);
     } catch (error) {
       console.error('Error searching products:', error);

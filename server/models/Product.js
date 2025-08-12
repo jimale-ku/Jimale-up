@@ -23,12 +23,26 @@ const productSchema = new mongoose.Schema({
 // Performance optimization: Add indexes for frequently queried fields
 productSchema.index({ name: 1 }); // For name searches
 productSchema.index({ category: 1 }); // For category filtering
-productSchema.index({ barcode: 1 }); // For barcode lookups
+// Note: barcode index is automatically created by unique: true in schema
 productSchema.index({ isAvailable: 1 }); // For availability filtering
 productSchema.index({ createdAt: -1 }); // For recent products
 
 // Compound index for common query patterns
 productSchema.index({ category: 1, isAvailable: 1 });
-productSchema.index({ name: 'text', category: 1 }); // Text search with category
+
+// Enhanced text index for better search performance (replaces the simple text index)
+productSchema.index({ 
+  name: 'text', 
+  category: 'text', 
+  brand: 'text',
+  description: 'text'
+}, {
+  weights: {
+    name: 10,        // Highest weight for product name
+    category: 5,     // Medium weight for category
+    brand: 3,        // Lower weight for brand
+    description: 1   // Lowest weight for description
+  }
+});
 
 module.exports = mongoose.model('Product', productSchema);

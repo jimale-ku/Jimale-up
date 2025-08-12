@@ -184,8 +184,9 @@ export default function MainScreen({ navigation }) {
       setSearchLoading(true);
       console.log('🔍 Searching for:', query);
       
-      // Search the database directly using the products endpoint
-      const response = await api.get(`/products?q=${encodeURIComponent(query)}&limit=100`);
+      // Search the ENTIRE database without pagination limits for search
+      // Use a higher limit to get more comprehensive search results
+      const response = await api.get(`/products?q=${encodeURIComponent(query)}&limit=500`);
       const searchResults = response.data || [];
       
       console.log('🔍 Search results:', searchResults.length, 'products found');
@@ -195,6 +196,8 @@ export default function MainScreen({ navigation }) {
         const img = product.img || product.image;
         return img && img !== '' && img !== 'https://via.placeholder.com/100' && img !== 'null';
       });
+      
+      console.log('🔍 Valid results after image filtering:', validResults.length, 'products');
       
       setSearchResults(validResults);
       setFilteredProducts(validResults);

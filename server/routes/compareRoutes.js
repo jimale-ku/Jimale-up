@@ -209,45 +209,65 @@ async function fetchCompare(locationCity, searchTerm) {
       // Updated selector for results-table - Fixed column mapping
       resultsTable.each((i, row) => {
         const $row = $(row);
-        const storeName = $row.find('td:nth-child(1)').text().trim();
-        const branch = $row.find('td:nth-child(2)').text().trim();
-        const address = $row.find('td:nth-child(3)').text().trim();
-        const priceText = $row.find('td:nth-child(4)').text().trim();
-        const quantityText = $row.find('td:nth-child(5)').text().trim();
+        const cells = $row.find('td');
         
-        // DEBUG: Log raw data being scraped (only in development)
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`🔍 [SCRAPING] ${searchTerm}: ${storeName} - ${branch} - ${priceText}`);
-        }
-        
-        if (branch && address && priceText) {
-          const price = parseFloat(priceText.replace(/[^\d.]/g, ''));
-          const quantity = parseInt(quantityText.replace(/[^\d]/g, '')) || 1;
+        if (cells.length >= 5) {
+          const storeName = cells.eq(0).text().trim();
+          const branch = cells.eq(1).text().trim();
+          const address = cells.eq(2).text().trim();
           
-          if (process.env.NODE_ENV === 'development') {
-            console.log(`   Parsed: ${price}₪ x${quantity}`);
+          // Try to find price in different columns
+          let priceText = '';
+          let quantityText = '';
+          
+          // Check if column 4 has price (old structure)
+          const col4Text = cells.eq(3).text().trim();
+          const col5Text = cells.eq(4).text().trim();
+          
+          if (/^\d+\.?\d*$/.test(col4Text)) {
+            // Column 4 has price (old structure)
+            priceText = col4Text;
+            quantityText = col5Text;
+          } else if (/^\d+\.?\d*$/.test(col5Text)) {
+            // Column 5 has price (new structure)
+            priceText = col5Text;
+            quantityText = col4Text;
           }
           
-          if (!isNaN(price) && price > 0) {
-            if (!results[branch]) {
-              results[branch] = {
-                branch,
-                address,
-                totalPrice: 0,
-                itemsFound: 0,
-                itemPrices: {},
-                productDetails: {}
-              };
+          // DEBUG: Log raw data being scraped (only in development)
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`🔍 [SCRAPING] ${searchTerm}: ${storeName} - ${branch} - ${priceText}`);
+          }
+          
+          if (branch && address && priceText) {
+            const price = parseFloat(priceText.replace(/[^\d.]/g, ''));
+            const quantity = parseInt(quantityText.replace(/[^\d]/g, '')) || 1;
+            
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`   Parsed: ${price}₪ x${quantity}`);
             }
             
-            results[branch].totalPrice += price;
-            results[branch].itemsFound += 1;
-            results[branch].itemPrices[searchTerm] = price;
-            results[branch].productDetails[searchTerm] = {
-              name: searchTerm,
-              price: price,
-              quantity: quantity
-            };
+            if (!isNaN(price) && price > 0) {
+              if (!results[branch]) {
+                results[branch] = {
+                  branch,
+                  address,
+                  totalPrice: 0,
+                  itemsFound: 0,
+                  itemPrices: {},
+                  productDetails: {}
+                };
+              }
+              
+              results[branch].totalPrice += price;
+              results[branch].itemsFound += 1;
+              results[branch].itemPrices[searchTerm] = price;
+              results[branch].productDetails[searchTerm] = {
+                name: searchTerm,
+                price: price,
+                quantity: quantity
+              };
+            }
           }
         }
       });

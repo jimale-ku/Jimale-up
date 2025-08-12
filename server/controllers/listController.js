@@ -44,15 +44,43 @@ async function authorizeListAccess(listId, userId) {
 
 const emitListUpdate = (req, list) => {
   const groupId = list.group?.toString();
-  const roomId = groupId || list.owner.toString();
-  console.log(`📢 Emitting listUpdate to room: ${roomId}`);
-  console.log(`📢 Group ID: ${groupId}, List ID: ${list._id}`);
-  req.app.get('io').to(roomId).emit('listUpdate', { 
-    listId: list._id.toString(),
-    groupId: groupId,
-    timestamp: Date.now(),
-    action: 'itemAdded'
-  });
+  const listId = list._id.toString();
+  
+  console.log(`📢 Emitting listUpdate to group: ${groupId}, list: ${listId}`);
+  
+  const io = req.app.get('io');
+  
+  // Emit to both group room and list room for comprehensive coverage
+  if (groupId) {
+    io.to(groupId).emit('listUpdate', { 
+      listId: listId,
+      groupId: groupId,
+      timestamp: Date.now(),
+      action: 'itemUpdated'
+    });
+    console.log(`📢 Emitted to group room: ${groupId}`);
+  }
+  
+  if (listId) {
+    io.to(listId).emit('listUpdate', { 
+      listId: listId,
+      groupId: groupId,
+      timestamp: Date.now(),
+      action: 'itemUpdated'
+    });
+    console.log(`📢 Emitted to list room: ${listId}`);
+  }
+  
+  // Also emit to owner's room if it's a personal list
+  if (!groupId && list.owner) {
+    io.to(list.owner.toString()).emit('listUpdate', { 
+      listId: listId,
+      groupId: null,
+      timestamp: Date.now(),
+      action: 'itemUpdated'
+    });
+    console.log(`📢 Emitted to owner room: ${list.owner}`);
+  }
 };
 
 // GET all this user’s lists (owned + shared)
