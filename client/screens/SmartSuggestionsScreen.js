@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
-import { registerListUpdates } from '../services/socketEvents';
+import { registerListUpdates, registerSuggestionUpdates } from '../services/socketEvents';
 
 const { width } = Dimensions.get('window');
 
@@ -136,15 +136,25 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
   useEffect(() => {
     if (!groupId) return;
     
-    const unsubscribe = registerListUpdates((data) => {
+    const unsubscribeList = registerListUpdates((data) => {
       console.log('📢 List update received in SmartSuggestionsScreen:', data);
       console.log('🔄 Refreshing badge count due to list update...');
       // Refresh the count when list is updated by other users
       fetchInitialCount();
     });
+
+    const unsubscribeSuggestions = registerSuggestionUpdates((data) => {
+      console.log('📊 Suggestion update received in SmartSuggestionsScreen:', data);
+      // Refresh suggestions when favorites/purchases are updated
+      if (data.action === 'favoriteAdded' || data.action === 'favoriteRemoved' || data.action === 'productPurchased') {
+        console.log('🔄 Refreshing suggestions due to suggestion update...');
+        fetchSmartSuggestions();
+      }
+    });
     
     return () => {
-      unsubscribe && unsubscribe();
+      unsubscribeList && unsubscribeList();
+      unsubscribeSuggestions && unsubscribeSuggestions();
     };
   }, [groupId]);
 
@@ -182,21 +192,11 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       setLoading(true);
       setFilteredSuggestions([]);
       
-      // Search the ENTIRE database with higher limit for comprehensive results
-      const response = await api.get(`/products?q=${encodeURIComponent(searchQuery)}&limit=500`);
+      // Search the database directly using the existing products endpoint
+      const response = await api.get(`/products?q=${encodeURIComponent(searchQuery)}&limit=100`);
       const searchResults = response.data || [];
       
-      console.log('🔍 SmartSuggestions search results:', searchResults.length, 'products found');
-      
-      // Filter to only show products with valid images (same as MainScreen)
-      const validResults = searchResults.filter(product => {
-        const img = product.img || product.image;
-        return img && img !== '' && img !== 'https://via.placeholder.com/100' && img !== 'null';
-      });
-      
-      console.log('🔍 SmartSuggestions valid results after image filtering:', validResults.length, 'products');
-      
-      setFilteredSuggestions(validResults);
+      setFilteredSuggestions(searchResults);
       setLoading(false);
     } catch (error) {
       console.error('Error searching products:', error);
@@ -319,7 +319,9 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
               await loadFavoritesStatus(productDetails);
             }
           } catch (err) {
-            console.error('Batch fetch failed, falling back to individual calls:', err);
+            // Silently handle batch fetch failure - this is expected behavior
+            console.log('📦 Batch fetch not available, using individual calls (this is normal)');
+            
             // Fallback to individual calls if batch fails
             const productDetails = await Promise.all(
               suggestionsList.slice(0, 10).map(async (s) => { // Limit to 10 for performance

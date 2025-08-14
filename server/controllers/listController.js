@@ -42,48 +42,42 @@ async function authorizeListAccess(listId, userId) {
   return list;
 }
 
-const emitListUpdate = (req, list) => {
+const emitListUpdate = (req, list, action = 'itemUpdated', itemName = null, itemId = null) => {
   const groupId = list.group?.toString();
   const listId = list._id.toString();
   
-  console.log(`📢 Emitting listUpdate to group: ${groupId}, list: ${listId}`);
+  console.log(`📢 Emitting listUpdate to group: ${groupId}, list: ${listId}, action: ${action}, item: ${itemName || 'N/A'}`);
   
   const io = req.app.get('io');
   
+  const updateData = {
+    listId: listId,
+    groupId: groupId,
+    timestamp: Date.now(),
+    action: action,
+    itemName: itemName,
+    itemId: itemId
+  };
+  
   // Emit to both group room and list room for comprehensive coverage
   if (groupId) {
-    io.to(groupId).emit('listUpdate', { 
-      listId: listId,
-      groupId: groupId,
-      timestamp: Date.now(),
-      action: 'itemUpdated'
-    });
-    console.log(`📢 Emitted to group room: ${groupId}`);
+    io.to(groupId).emit('listUpdate', updateData);
+    console.log(`📢 Emitted to group room: ${groupId} - Action: ${action}, Item: ${itemName || 'N/A'}`);
   }
   
   if (listId) {
-    io.to(listId).emit('listUpdate', { 
-      listId: listId,
-      groupId: groupId,
-      timestamp: Date.now(),
-      action: 'itemUpdated'
-    });
-    console.log(`📢 Emitted to list room: ${listId}`);
+    io.to(listId).emit('listUpdate', updateData);
+    console.log(`📢 Emitted to list room: ${listId} - Action: ${action}, Item: ${itemName || 'N/A'}`);
   }
   
   // Also emit to owner's room if it's a personal list
   if (!groupId && list.owner) {
-    io.to(list.owner.toString()).emit('listUpdate', { 
-      listId: listId,
-      groupId: null,
-      timestamp: Date.now(),
-      action: 'itemUpdated'
-    });
-    console.log(`📢 Emitted to owner room: ${list.owner}`);
+    io.to(list.owner.toString()).emit('listUpdate', updateData);
+    console.log(`📢 Emitted to owner room: ${list.owner} - Action: ${action}, Item: ${itemName || 'N/A'}`);
   }
 };
 
-// GET all this user’s lists (owned + shared)
+// GET all this user's lists (owned + shared)
 exports.getLists = async (req, res) => {
   try {
     const ownedLists = await List.find({ owner: req.userId }).populate('items');
@@ -232,9 +226,17 @@ exports.deleteItemById = async (req, res) => {
       return res.json({ message: 'Item deleted (no list found)' });
     }
 
-    const hasAccess =
-      list.owner.toString() === req.userId ||
-      (list.group && list.group.members.some(m => m.toString() === req.userId));
+    // Check if user has access to delete items
+    let hasAccess = false;
+    
+    if (list.owner && list.owner.toString() === req.userId) {
+      // User is the list owner
+      hasAccess = true;
+    } else if (list.group) {
+      // Check if user is a group member (any role: owner, admin, member)
+      const groupMember = list.group.members.find(m => m.user.toString() === req.userId);
+      hasAccess = !!groupMember;
+    }
 
     if (!hasAccess) {
       console.log('Access denied: user', req.userId, 'is not owner or group member');
@@ -245,7 +247,7 @@ exports.deleteItemById = async (req, res) => {
     await list.save();
     await Item.findByIdAndDelete(itemId);
 
-    emitListUpdate(req, list); // ✅ notify via socket
+    emitListUpdate(req, list, 'itemDeleted', item.name, itemId); // ✅ notify via socket with specific action
     console.log('Item deleted successfully');
     res.json({ message: 'Item deleted', deletedBy: req.userId, deletedAt: new Date(), itemName: item.name });
   } catch (err) {
@@ -253,7 +255,6 @@ exports.deleteItemById = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
-
 
 // POST /api/list
 exports.addItemToList = async (req, res) => {
@@ -328,7 +329,7 @@ exports.addItemToList = async (req, res) => {
       }
     }
 
-    emitListUpdate(req, list); // ✅ Emit item addition
+    emitListUpdate(req, list, 'itemAdded', item.name, item._id.toString()); // ✅ Emit item addition with specific action
     res.status(201).json({ item, mlWarning });
   } catch (err) {
     console.error('❌ Failed to add item:', err);
@@ -410,7 +411,7 @@ exports.addItemToListById = async (req, res) => {
       }
     }
 
-    emitListUpdate(req, list); // ✅ Emit item addition
+    emitListUpdate(req, list, 'itemAdded', item.name, item._id.toString()); // ✅ Emit item addition with specific action
     console.log('emitListUpdate called');
     res.status(201).json({ item, mlWarning });
   } catch (err) {
@@ -452,7 +453,6 @@ exports.updateQuantity = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
-
 
 exports.markItemAsBought = async (req, res) => {
   const { id: itemId } = req.params;
@@ -498,7 +498,7 @@ exports.markItemAsBought = async (req, res) => {
     await list.save();
     await Item.findByIdAndDelete(itemId);
 
-    emitListUpdate(req, list);
+    emitListUpdate(req, list, 'itemPurchased', item.name, itemId);
     res.json({ message: 'Item marked as bought and archived' });
 
   } catch (err) {

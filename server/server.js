@@ -118,12 +118,12 @@ io.on('connection', (socket) => {
       
       // Store groupId in socket for later use
       socket.groupId = groupId;
-      socket.join(groupId);
+    socket.join(groupId);
       
-      console.log(`👥 Socket ${socket.id} joined group: ${groupId}`);
+    console.log(`👥 Socket ${socket.id} joined group: ${groupId}`);
       
-      // Send confirmation to client
-      socket.emit('joinedGroup', { groupId, socketId: socket.id });
+    // Send confirmation to client
+    socket.emit('joinedGroup', { groupId, socketId: socket.id });
       
       // Also join the group's list room if available
       try {
@@ -175,6 +175,40 @@ io.on('connection', (socket) => {
         timestamp: Date.now()
       });
       console.log(`📢 Emitted to group room: ${groupId}`);
+    }
+  });
+
+  // Handle member added to group (from client socket)
+  socket.on('memberAdded', (data) => {
+    const { groupId, newMember, addedBy } = data;
+    console.log(`👥 Broadcasting memberAdded to group ${groupId}`);
+    
+    if (groupId) {
+      io.to(groupId).emit('memberAdded', {
+        groupId,
+        newMember,
+        addedBy,
+        timestamp: Date.now()
+      });
+      console.log(`📢 Emitted memberAdded to group room: ${groupId}`);
+    }
+  });
+
+  // Handle suggestion updates (favorites, purchases, etc.)
+  socket.on('suggestionUpdate', (data) => {
+    const { groupId, productId, userId, action, ...additionalData } = data;
+    console.log(`📊 Broadcasting suggestionUpdate to group ${groupId}`);
+    
+    if (groupId) {
+      io.to(groupId).emit('suggestionUpdate', {
+        groupId,
+        productId,
+        userId,
+        action,
+        ...additionalData,
+        timestamp: Date.now()
+      });
+      console.log(`📢 Emitted suggestionUpdate to group room: ${groupId} - Action: ${action}`);
     }
   });
 

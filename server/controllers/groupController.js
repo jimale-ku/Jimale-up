@@ -193,6 +193,27 @@ exports.addMember = async (req, res) => {
     // Add as member
     group.members.push({ user: user._id, role: 'member' });
     await group.save();
+    
+    // Emit socket event to notify group members about new member
+    const io = req.app.get('io');
+    if (io) {
+      const memberAddedEvent = {
+        groupId: id,
+        newMember: {
+          userId: user._id,
+          username: user.username,
+          profilePicUrl: user.profilePicUrl,
+          role: 'member'
+        },
+        addedBy: req.userId,
+        timestamp: Date.now()
+      };
+      
+      // Emit to the group room
+      io.to(id).emit('memberAdded', memberAddedEvent);
+      console.log(`📢 Emitted memberAdded event for group ${id}:`, memberAddedEvent);
+    }
+    
     // Return updated group (populated)
     const updated = await Group.findById(id)
       .populate('members.user', 'username profilePicUrl')
