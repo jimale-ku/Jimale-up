@@ -49,6 +49,23 @@ export function registerSuggestionUpdates(callback) {
   return () => socket.off('suggestionUpdate', callback);
 }
 
+export function registerGroupNotifications(callback) {
+  socket.on('groupCreated', (data) => {
+    console.log('👥 Group created notification received:', data);
+    callback(data);
+  });
+  
+  socket.on('memberAdded', (data) => {
+    console.log('👥 Member added notification received:', data);
+    callback(data);
+  });
+  
+  return () => {
+    socket.off('groupCreated', callback);
+    socket.off('memberAdded', callback);
+  };
+}
+
 /**
  * Emit that the user is joining a socket room (group or list)
  * @param {string} roomId - groupId or listId

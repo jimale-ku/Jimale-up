@@ -46,6 +46,26 @@ exports.createGroup = async (req, res) => {
     group.list = list._id;
     await group.save();
 
+    // Emit socket event to notify all new members about the group creation
+    const io = req.app.get('io');
+    if (io) {
+      const groupCreatedEvent = {
+        groupId: group._id.toString(),
+        groupName: group.name,
+        createdBy: req.userId,
+        members: groupMembers.map(m => m.user.toString()),
+        timestamp: Date.now()
+      };
+      
+      // Emit to each new member individually
+      groupMembers.forEach(member => {
+        if (member.user.toString() !== req.userId) { // Don't emit to creator
+          io.to(member.user.toString()).emit('groupCreated', groupCreatedEvent);
+          console.log(`📢 Emitted groupCreated event to user ${member.user}:`, groupCreatedEvent);
+        }
+      });
+    }
+
     const populated = await Group.findById(group._id)
       .populate('members.user', 'username profilePicUrl')
       .populate('waitingList', 'username profilePicUrl')

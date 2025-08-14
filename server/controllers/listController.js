@@ -506,3 +506,293 @@ exports.markItemAsBought = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+      console.log('Access denied to list');
+
+      return res.status(403).json({ message: 'Access denied' });
+
+    }
+
+
+
+    list.items.push(item._id);
+
+    await list.save();
+
+    await item.populate('product');
+
+    console.log('Item added to list and saved');
+
+
+
+    // Log to ProductHistory for ML
+
+    try {
+
+      await ProductHistory.create({
+
+        userId: req.userId,
+
+        productId: productId,
+
+        action: 'added',
+
+        createdAt: new Date()
+
+      });
+
+    } catch (phErr) {
+
+      console.error('Failed to log ProductHistory:', phErr);
+
+    }
+
+
+
+    let mlWarning = null;
+
+    if (productId) {
+
+      try {
+
+        const features = await extractFeaturesForProduct(productId, req.userId, list.group);
+
+        const featuresArray = [
+
+          1, // bias term
+
+          features.isFavorite || 0,
+
+          features.purchasedBefore || 0,
+
+          features.timesPurchased || 0,
+
+          features.recentlyPurchased || 0,
+
+          features.timesWasRejectedByUser || 0,
+
+          features.timesWasRejectedByGroup || 0,
+
+          features.groupPopularity || 0,
+
+          features.priceScore || 0,
+
+          features.categoryPopularity || 0
+
+        ];
+
+        await TrainingExample.create({
+
+          userId: req.userId,
+
+          productId: productId,
+
+          features: featuresArray,
+
+          label: 1 // 1 = accepted/added
+
+        });
+
+      } catch (mlError) {
+
+        console.error('ML training error:', mlError);
+
+        mlWarning = 'ML training failed: ' + mlError.message;
+
+      }
+
+    }
+
+
+
+    emitListUpdate(req, list); // ✅ Emit item addition
+
+    console.log('emitListUpdate called');
+
+    res.status(201).json({ item, mlWarning });
+
+  } catch (err) {
+
+    console.error('❌ Failed to add item:', err);
+
+    res.status(500).json({ message: 'Failed to add item', error: err.message });
+
+  }
+
+};
+
+
+
+// PATCH /list/item/:itemId/quantity
+
+exports.updateQuantity = async (req, res) => {
+
+  const { itemId } = req.params;
+
+  const { change } = req.body;
+
+
+
+  try {
+
+    const item = await Item.findById(itemId);
+
+    if (!item) return res.status(404).json({ message: 'Item not found' });
+
+
+
+    item.quantity += change;
+
+
+
+    if (item.quantity < 1) {
+
+      await item.remove();
+
+
+
+      // emit listUpdate to group if item was removed
+
+      const list = await List.findOne({ items: itemId }).populate('group');
+
+      if (list) emitListUpdate(req, list);
+
+
+
+      return res.json({ deleted: true });
+
+    }
+
+
+
+    await item.save();
+
+
+
+    // emit listUpdate to group if item was changed
+
+    const list = await List.findOne({ items: itemId }).populate('group');
+
+    if (list) emitListUpdate(req, list);
+
+
+
+    res.json(item);
+
+  } catch (err) {
+
+    console.error('❌ Quantity update error:', err);
+
+    res.status(500).json({ message: 'Server error' });
+
+  }
+
+};
+
+
+
+
+
+exports.markItemAsBought = async (req, res) => {
+
+  const { id: itemId } = req.params;
+
+
+
+  try {
+
+    const item = await Item.findById(itemId);
+
+    if (!item) return res.status(404).json({ message: 'Item not found' });
+
+
+
+    const list = await List.findOne({ items: itemId }).populate('group');
+
+    if (!list) return res.status(404).json({ message: 'List not found for this item' });
+
+
+
+    const hasAccess =
+
+      list.owner.toString() === req.userId ||
+
+      (list.group && list.group.members.some(m => m.toString() === req.userId));
+
+
+
+    if (!hasAccess) return res.status(403).json({ message: 'Access denied' });
+
+
+
+    // سجل في التاريخ
+
+    await PurchaseHistory.create({
+
+      name: item.name,
+
+      product: item.product,
+
+      quantity: item.quantity,
+
+      user: req.userId,
+
+      group: list.group?._id || null,
+
+      boughtAt: new Date()
+
+    });
+
+
+
+    // Also log to ProductHistory for smart suggestions
+
+    await ProductHistory.create({
+
+      userId: req.userId,
+
+      productId: item.product.toString(),
+
+      listId: list._id,
+
+      action: 'purchased',
+
+      quantity: item.quantity,
+
+      metadata: {
+
+        groupId: list.group?._id || null,
+
+        boughtAt: new Date()
+
+      }
+
+    });
+
+
+
+    // احذف من القائمة
+
+    list.items = list.items.filter(i => i.toString() !== itemId);
+
+    await list.save();
+
+    await Item.findByIdAndDelete(itemId);
+
+
+
+    emitListUpdate(req, list);
+
+    res.json({ message: 'Item marked as bought and archived' });
+
+
+
+  } catch (err) {
+
+    console.error('❌ Failed to mark item as bought:', err);
+
+    res.status(500).json({ message: 'Server error' });
+
+  }
+
+};

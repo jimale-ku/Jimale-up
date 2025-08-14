@@ -107,9 +107,32 @@ const initializeMLModel = async () => {
   }
 };
 
+// Socket.IO authentication middleware
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth.token;
+    if (!token) {
+      return next(new Error('Authentication token required'));
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.userId = decoded.id;
+    socket.username = decoded.username;
+    
+    // Join user's personal room for direct notifications
+    socket.join(decoded.id.toString());
+    
+    console.log(`🔐 Socket authenticated for user: ${decoded.username} (${decoded.id})`);
+    next();
+  } catch (error) {
+    console.log('❌ Socket authentication failed:', error.message);
+    next(new Error('Authentication failed'));
+  }
+});
+
 // Socket.IO event handlers
 io.on('connection', (socket) => {
-  console.log('🔌 Socket connected:', socket.id);
+  console.log(`🔌 Socket connected for user ${socket.username}:`, socket.id);
 
   // Handle group joining with verification
   socket.on('joinGroup', async (groupId) => {
@@ -210,6 +233,18 @@ io.on('connection', (socket) => {
       });
       console.log(`📢 Emitted suggestionUpdate to group room: ${groupId} - Action: ${action}`);
     }
+  });
+
+  // Handle group creation notifications
+  socket.on('groupCreated', (data) => {
+    const { groupId, groupName, createdBy, members } = data;
+    console.log(`👥 Broadcasting groupCreated to members: ${members}`);
+    members.forEach(memberId => {
+      if (memberId !== createdBy) {
+        io.to(memberId).emit('groupCreated', { groupId, groupName, createdBy, timestamp: Date.now() });
+        console.log(`📢 Emitted groupCreated to member: ${memberId}`);
+      }
+    });
   });
 
   socket.on('disconnect', () => {
