@@ -4,6 +4,7 @@ const mongoose   = require('mongoose');
 const cors       = require('cors');
 const http       = require('http');
 const { Server } = require('socket.io');
+const jwt        = require('jsonwebtoken');
 
 require('dotenv').config();
 
@@ -264,7 +265,7 @@ server.listen(PORT, () => {
   // Get custom branding from environment variables or use defaults
   const APP_NAME = process.env.APP_NAME || 'SmartBuy';
   const DEVELOPER_NAME = process.env.DEVELOPER_NAME || 'Your Name';
-  const NETWORK_IP = process.env.NETWORK_IP || '172.20.10.6';
+  const NETWORK_IP = process.env.NETWORK_IP || '192.168.201.100';
   
   console.log(`🚀 ${APP_NAME} Server Started`);
   console.log(`👨‍💻 Developer: ${DEVELOPER_NAME}`);

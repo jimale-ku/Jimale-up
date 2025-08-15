@@ -156,7 +156,7 @@ exports.deleteList = async (req, res) => {
 // POST /lists/:id/items
 exports.addItemToList = async (req, res) => {
   try {
-    const { name, quantity = 1, productId } = req.body;
+    const { name, quantity = 1, productId, icon, barcode } = req.body;
     const listId = req.params.id;
     
     const list = await authorizeListAccess(listId, req.userId);
@@ -169,7 +169,10 @@ exports.addItemToList = async (req, res) => {
       name,
       quantity,
       product: productId || null,
-      list: listId
+      list: listId,
+      icon: icon || null,
+      barcode: barcode || '',
+      addedBy: req.userId
     });
 
     await item.save();
@@ -394,3 +397,4 @@ exports.markItemAsBought = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+

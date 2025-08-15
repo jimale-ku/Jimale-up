@@ -23,6 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { joinRoom, registerGroupUpdates, registerGroupNotifications } from '../services/socketEvents';
+import { disconnectSocket } from '../services/socket';
 import { useFocusEffect } from '@react-navigation/native';
 import { apiEventEmitter } from '../services/api';
 import jwt_decode from 'jwt-decode';
@@ -85,6 +86,8 @@ export default function MainScreen({ navigation }) {
   }, []);
 
   const logout = async () => {
+    // Disconnect socket before logout
+    disconnectSocket();
     await AsyncStorage.removeItem('token');
     navigation.replace('Login');
   };

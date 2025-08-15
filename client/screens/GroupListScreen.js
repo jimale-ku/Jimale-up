@@ -55,7 +55,7 @@ export default function GroupListScreen({ navigation }) {
         Toast.show({
           type: 'success',
           text1: 'New Group Created!',
-          text2: `You've been added to "${data.groupName}"`,
+          text2: `You've been added to a new group`,
           position: 'top',
           visibilityTime: 4000,
         });
@@ -66,7 +66,7 @@ export default function GroupListScreen({ navigation }) {
         Toast.show({
           type: 'info',
           text1: 'New Member Added!',
-          text2: `A new member joined your group`,
+          text2: 'A new member joined your group',
           position: 'top',
           visibilityTime: 3000,
         });

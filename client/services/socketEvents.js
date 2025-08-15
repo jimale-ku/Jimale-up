@@ -1,17 +1,38 @@
 // services/socketEvents.js
-import socket from './socket';
+import { getSocket } from './socket';
 
-socket.on('connect', () => {
-  console.log('✅ Socket connected:', socket.id);
-});
+// Helper function to get socket instance
+const getSocketInstance = () => {
+  const socket = getSocket();
+  if (!socket) {
+    console.warn('⚠️ Socket not initialized. Call initializeSocket() first.');
+    return null;
+  }
+  return socket;
+};
 
-socket.on('joinedGroup', (data) => {
-  console.log('👥 Joined group room:', data);
-});
+// Initialize socket event listeners when socket is available
+let socket = null;
 
-socket.on('listUpdate', (data) => {
-  console.log('📢 Received listUpdate:', data);
-});
+const initializeSocketListeners = () => {
+  socket = getSocketInstance();
+  if (!socket) return;
+
+  socket.on('connect', () => {
+    console.log('✅ Socket connected:', socket.id);
+  });
+
+  socket.on('joinedGroup', (data) => {
+    console.log('👥 Joined group room:', data);
+  });
+
+  socket.on('listUpdate', (data) => {
+    console.log('📢 Received listUpdate:', data);
+  });
+};
+
+// Initialize listeners when module loads
+setTimeout(initializeSocketListeners, 100);
 
 /**
  * Listen for group changes (e.g. members added/removed, group deleted)
@@ -19,6 +40,9 @@ socket.on('listUpdate', (data) => {
  * @returns {Function} unsubscribe function
  */
 export function registerGroupUpdates(callback) {
+  const socket = getSocketInstance();
+  if (!socket) return () => {};
+  
   socket.on('groupUpdate', callback);
   return () => socket.off('groupUpdate', callback);
 }
@@ -29,6 +53,9 @@ export function registerGroupUpdates(callback) {
  * @returns {Function} unsubscribe function
  */
 export function registerListUpdates(callback) {
+  const socket = getSocketInstance();
+  if (!socket) return () => {};
+  
   socket.on('listUpdate', (data) => {
     console.log('📢 List update received in registerListUpdates:', data);
     callback(data);
@@ -42,6 +69,9 @@ export function registerListUpdates(callback) {
  * @returns {Function} unsubscribe function
  */
 export function registerSuggestionUpdates(callback) {
+  const socket = getSocketInstance();
+  if (!socket) return () => {};
+  
   socket.on('suggestionUpdate', (data) => {
     console.log('📊 Suggestion update received:', data);
     callback(data);
@@ -50,6 +80,9 @@ export function registerSuggestionUpdates(callback) {
 }
 
 export function registerGroupNotifications(callback) {
+  const socket = getSocketInstance();
+  if (!socket) return () => {};
+  
   socket.on('groupCreated', (data) => {
     console.log('👥 Group created notification received:', data);
     callback(data);
@@ -71,13 +104,22 @@ export function registerGroupNotifications(callback) {
  * @param {string} roomId - groupId or listId
  */
 export function joinRoom(roomId) {
+  const socket = getSocketInstance();
+  if (!socket) return;
+  
   socket.emit('joinGroup', roomId);
 }
 
 export function joinListRoom(listId) {
+  const socket = getSocketInstance();
+  if (!socket) return;
+  
   socket.emit('joinList', listId);
 }
 
 export function emitListUpdate(listId) {
+  const socket = getSocketInstance();
+  if (!socket) return;
+  
   socket.emit('listUpdate', { listId });
 }
