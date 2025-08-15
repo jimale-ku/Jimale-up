@@ -58,6 +58,7 @@ const useProductJson = () => {
 const SmartSuggestionsScreen = ({ navigation, route }) => {
   const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [selectedMainTab, setSelectedMainTab] = useState('all');
   const [selectedSmartTab, setSelectedSmartTab] = useState('recent');
   const [favorites, setFavorites] = useState(new Set());
@@ -73,6 +74,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
   const [addingItems, setAddingItems] = useState(new Set());
   const [addedItems, setAddedItems] = useState(new Set());
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  const [preloadedAllProducts, setPreloadedAllProducts] = useState([]);
 
   const groupId = route?.params?.groupId || null;
 
@@ -108,13 +110,24 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
     const currentCategory = getCurrentCategory();
     
     if (currentCategory === 'all') {
-      setSuggestions([]);
-      setFilteredSuggestions([]);
-      setOffset(0);
-      setHasMore(true);
-      setLoadedProductIds(new Set());
-      setSearchTerm('');
-      fetchSmartSuggestions('all', 0, true);
+      // Use preloaded products for instant loading if available
+      if (preloadedAllProducts.length > 0 && suggestions.length === 0) {
+        console.log('🚀 Using preloaded products for instant loading');
+        setSuggestions(preloadedAllProducts);
+        setOffset(30);
+        setHasMore(preloadedAllProducts.length > 0);
+        setFilteredSuggestions([]);
+        setSearchTerm('');
+        setLoading(false);
+      } else if (suggestions.length === 0) {
+        setSuggestions([]);
+        setFilteredSuggestions([]);
+        setOffset(0);
+        setHasMore(true);
+        setLoadedProductIds(new Set());
+        setSearchTerm('');
+        fetchSmartSuggestions('all', 0, true);
+      }
     } else if (selectedMainTab === 'smart') {
       // Don't auto-fetch for smart tab, let user click sub-tabs
       setSuggestions([]);
@@ -126,11 +139,30 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
   useEffect(() => {
     try {
       fetchInitialCount();
+      // Preload ALL products for faster switching
+      preloadAllProducts();
     } catch (error) {
       console.error('Error in fetchInitialCount useEffect:', error);
       setAddedItemsCount(0);
     }
   }, [groupId]);
+
+  // Preload ALL products for faster switching
+  const preloadAllProducts = async () => {
+    try {
+      console.log('🚀 Preloading ALL products for faster switching...');
+      const res = await api.get('/products?limit=30&offset=0');
+      const allProducts = res.data || [];
+      const validProducts = allProducts.filter(product => {
+        const img = product.img || product.image;
+        return img && img !== '' && img !== 'null';
+      });
+      setPreloadedAllProducts(validProducts);
+      console.log('🚀 Preloaded', validProducts.length, 'products');
+    } catch (error) {
+      console.error('Error preloading products:', error);
+    }
+  };
 
   // Listen for real-time list updates to update badge count
   useEffect(() => {
@@ -238,45 +270,53 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
   const fetchSmartSuggestions = async (category = 'all', customOffset = 0, reset = false) => {
     try {
       console.log('🔄 Fetching smart suggestions for category:', category, 'GroupId:', groupId);
-      setLoading(true);
+      
+      // Use different loading states for initial load vs pagination
+      if (reset) {
+        setLoading(true);
+      } else {
+        setLoadingMore(true);
+      }
       
       // For ALL, use the exact same logic as MainScreen
       if (category === 'all') {
         // Don't fetch more products if we're currently searching
         if (searchTerm.trim()) {
           setLoading(false);
+          setLoadingMore(false);
           return;
         }
         
         console.log('📦 ALL card: Fetching products:', reset ? 'initial' : 'pagination', 'offset:', reset ? 0 : customOffset);
         
-        // Use the exact same API call as MainScreen
-        const res = await api.get(`/products?limit=20&offset=${reset ? 0 : customOffset}`);
+        // Use the exact same API call as MainScreen - optimized for speed
+        const res = await api.get(`/products?limit=30&offset=${reset ? 0 : customOffset}`);
         const allProducts = res.data || [];
         
         console.log('📦 ALL card: Received products:', allProducts.length);
         
-        // Filter to only show products with valid images (same as MainScreen)
+        // Optimized filtering - only basic image validation for speed
         const validProducts = allProducts.filter(product => {
           const img = product.img || product.image;
-          return img && img !== '' && img !== 'https://via.placeholder.com/100' && img !== 'null';
+          return img && img !== '' && img !== 'null';
         });
         
         console.log('📦 ALL card: Valid products:', validProducts.length);
         
         if (reset) {
           setSuggestions(validProducts);
-          setOffset(20);
-          setHasMore(validProducts.length === 20);
-          console.log('📦 ALL card: Reset: loaded', validProducts.length, 'products, hasMore:', validProducts.length === 20);
+          setOffset(30);
+          setHasMore(validProducts.length > 0);
+          console.log('📦 ALL card: Reset: loaded', validProducts.length, 'products, hasMore:', validProducts.length > 0);
+          setLoading(false);
         } else {
           setSuggestions(prev => [...prev, ...validProducts]);
-          setOffset(prev => prev + 20);
-          setHasMore(validProducts.length === 20);
-          console.log('📦 ALL card: Pagination: added', validProducts.length, 'products, total:', suggestions.length + validProducts.length, 'hasMore:', validProducts.length === 20);
+          setOffset(prev => prev + 30);
+          setHasMore(validProducts.length > 0);
+          console.log('📦 ALL card: Pagination: added', validProducts.length, 'products, total:', suggestions.length + validProducts.length, 'hasMore:', validProducts.length > 0);
+          setLoadingMore(false);
         }
         
-        setLoading(false);
         return;
       }
       // For smart cards, fetch only product IDs and then fetch details from backend - OPTIMIZED
@@ -347,6 +387,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       showToast('Failed to load smart suggestions');
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
@@ -384,7 +425,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
     }
   };
 
-  // Toggle favorite status
+  // Toggle favorite status - optimized to prevent page reload
   const toggleFavorite = async (productId) => {
     try {
       // Validate required parameters
@@ -400,18 +441,27 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         return;
       }
 
-      console.log('🔍 Toggle favorite:', productId, 'GroupId:', groupId);
+      console.log('🔍 Toggle favorite:', productId, 'GroupId:', groupId, 'Current favorites:', Array.from(favorites));
 
       const isFavorited = favorites.has(productId);
+      console.log('🔍 Is favorited:', isFavorited);
+      
+      // Optimistic update - update UI immediately
+      setFavorites(prev => {
+        const newSet = new Set(prev);
+        if (isFavorited) {
+          newSet.delete(productId);
+          console.log('🔍 Removing from favorites:', productId);
+        } else {
+          newSet.add(productId);
+          console.log('🔍 Adding to favorites:', productId);
+        }
+        return newSet;
+      });
+
       if (isFavorited) {
         const response = await api.post('/suggestions/favorites/remove', { productId, groupId });
         console.log('✅ Removed from favorites:', productId);
-        
-        setFavorites(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(productId);
-          return newSet;
-        });
         
         // Remove item from suggestions list if we're on favorite tab
         if (selectedMainTab === 'smart' && selectedSmartTab === 'favorite') {
@@ -422,16 +472,22 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
       } else {
         const response = await api.post('/suggestions/favorites/add', { productId, groupId });
         console.log('✅ Added to favorites:', productId);
-        
-        setFavorites(prev => {
-          const newSet = new Set(prev);
-          newSet.add(productId);
-          return newSet;
-        });
         showToast('Added to favorites');
       }
     } catch (error) {
       console.error('❌ Error toggling favorite:', error.message);
+      
+      // Revert optimistic update on error
+      setFavorites(prev => {
+        const newSet = new Set(prev);
+        if (isFavorited) {
+          newSet.add(productId); // Revert to favorited state
+        } else {
+          newSet.delete(productId); // Revert to not favorited state
+        }
+        console.log('🔍 Reverted favorites to:', Array.from(newSet));
+        return newSet;
+      });
       
       // Provide more specific error messages
       if (error.response?.status === 400) {
@@ -511,10 +567,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
     const wasAdded = addedItems.has(itemId);
     
     return (
-      <TouchableOpacity 
-        style={styles.suggestionItem}
-        onPress={() => handleAddToCart(item)}
-      >
+      <View style={styles.suggestionItem}>
         <View style={styles.productImageContainer}>
           <Image 
             source={{ uri: item.img || 'https://via.placeholder.com/60' }} 
@@ -592,8 +645,25 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
         <View style={styles.actionButtons}>
           {/* Heart Icon for Favorites */}
           <TouchableOpacity 
-            style={styles.heartButton}
-            onPress={() => toggleFavorite(item.productId || item._id)}
+            style={{
+              padding: 10,
+              backgroundColor: '#f0f0f0',
+              borderRadius: 20,
+              borderWidth: 1,
+              borderColor: '#ddd',
+              marginRight: 8,
+              minWidth: 40,
+              minHeight: 40,
+              justifyContent: 'center',
+              alignItems: 'center'
+            }}
+            onPress={() => {
+              const productId = item.productId || item._id;
+              console.log('💖 Heart clicked for product:', productId, 'Current favorites:', Array.from(favorites));
+              toggleFavorite(productId);
+            }}
+            activeOpacity={0.7}
+            hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
           >
             <Ionicons 
               name={favorites.has(item.productId || item._id) ? "heart" : "heart-outline"} 
@@ -602,12 +672,15 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
             />
           </TouchableOpacity>
           
-          <TouchableOpacity 
-            style={styles.rejectButton}
-            onPress={() => handleRejectSuggestion(item)}
-          >
-            <Ionicons name="close" size={16} color="#FF6B6B" />
-          </TouchableOpacity>
+          {/* Only show X button for smart suggestions, not for ALL tab */}
+          {selectedMainTab !== 'all' && (
+            <TouchableOpacity 
+              style={styles.rejectButton}
+              onPress={() => handleRejectSuggestion(item)}
+            >
+              <Ionicons name="close" size={16} color="#FF6B6B" />
+            </TouchableOpacity>
+          )}
           
           <TouchableOpacity 
             style={[
@@ -627,7 +700,7 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
             )}
           </TouchableOpacity>
         </View>
-      </TouchableOpacity>
+      </View>
     );
   };
 
@@ -834,22 +907,25 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
     );
   };
 
-  // Infinite scroll for ALL card (Instagram-style)
+  // Infinite scroll for ALL card - continuous bottom loading only
   const handleEndReached = () => {
-    console.log('📜 ALL card: End reached - loading:', loading, 'hasMore:', hasMore, 'searchTerm:', searchTerm.trim());
+    console.log('📜 ALL card: End reached - loadingMore:', loadingMore, 'hasMore:', hasMore, 'searchTerm:', searchTerm.trim(), 'offset:', offset);
     
-    // Only fetch more if we're on ALL tab, not searching, not already loading, and have more items
-    if (selectedMainTab === 'all' && !loading && hasMore && !searchTerm.trim()) {
-      console.log('📜 ALL card: Fetching more products...');
+    // Only fetch more if we're on ALL tab, not searching, not already loading more, and have more items
+    if (selectedMainTab === 'all' && !loadingMore && hasMore && !searchTerm.trim()) {
+      console.log('📜 ALL card: Loading fresh products from bottom...');
+      // Load immediately when reaching the end - no delay for smoother experience
       fetchSmartSuggestions('all', offset, false);
     } else if (selectedMainTab !== 'all') {
       console.log('📜 ALL card: Skipping pagination - not on ALL tab');
     } else if (searchTerm.trim()) {
       console.log('📜 ALL card: Skipping pagination - currently searching');
-    } else if (loading) {
-      console.log('📜 ALL card: Skipping pagination - already loading');
+    } else if (loadingMore) {
+      console.log('📜 ALL card: Skipping pagination - already loading more');
     } else if (!hasMore) {
-      console.log('📜 ALL card: Skipping pagination - no more products');
+      console.log('📜 ALL card: No more products available');
+    } else {
+      console.log('📜 ALL card: Unknown condition - not loading more');
     }
   };
 
@@ -958,33 +1034,27 @@ const SmartSuggestionsScreen = ({ navigation, route }) => {
             </View>
           )
         }
-        refreshing={loading && suggestions.length === 0}
-        onRefresh={() => {
-          setLoadedProductIds(new Set());
-          const currentCategory = getCurrentCategory();
-          fetchSmartSuggestions(currentCategory, 0, true);
-        }}
+        refreshing={false}
+        onRefresh={null}
         onEndReached={handleEndReached}
-        onEndReachedThreshold={0.3}
+        onEndReachedThreshold={0.5}
         ListFooterComponent={
-          loading && !searchTerm.trim() && selectedMainTab === 'all' ? (
+          loadingMore && !searchTerm.trim() && selectedMainTab === 'all' ? (
             <View style={styles.loadingFooter}>
               <ActivityIndicator size="small" color="#2E7D32" />
-              <Text style={styles.loadingFooterText}>Loading more products...</Text>
+              <Text style={styles.loadingFooterText}>Loading new products...</Text>
             </View>
           ) : null
         }
-        refreshing={loading && suggestions.length === 0}
-        onRefresh={() => {
-          console.log('🔄 ALL card: Pull to refresh triggered');
-          setOffset(0);
-          setHasMore(true);
-          fetchSmartSuggestions('all', 0, true);
-        }}
         maintainVisibleContentPosition={{
           minIndexForVisible: 0,
           autoscrollToTopThreshold: 10,
         }}
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={10}
+        windowSize={10}
+        initialNumToRender={10}
+        getItemLayout={null}
       />
       {toast.visible && (
         <View style={styles.toast}>

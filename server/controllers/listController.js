@@ -131,7 +131,7 @@ exports.updateList = async (req, res) => {
   try {
     const list = await authorizeListAccess(req.params.id, req.userId);
     if (!list) return res.status(403).json({ message: 'Access denied' });
-    
+
     Object.assign(list, req.body);
     await list.save();
     res.json(list);
@@ -145,7 +145,7 @@ exports.deleteList = async (req, res) => {
   try {
     const list = await authorizeListAccess(req.params.id, req.userId);
     if (!list) return res.status(403).json({ message: 'Access denied' });
-    
+
     await List.findByIdAndDelete(req.params.id);
     res.json({ message: 'List deleted' });
   } catch (err) {
@@ -234,7 +234,7 @@ exports.addItemToListById = async (req, res) => {
   try {
     const { quantity = 1 } = req.body;
     const { id: listId, productId } = req.params;
-    
+
     const list = await authorizeListAccess(listId, req.userId);
     if (!list) {
       console.log('Access denied to list');
