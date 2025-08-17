@@ -73,7 +73,10 @@ const StoreDetailScreen = ({ route, navigation }) => {
           boughtProducts: boughtProductsWithDetails
         });
         // Navigate back to group list with success
-        navigation.navigate('GroupSharedList', { groupId });
+        navigation.navigate('GroupSharedList', { 
+          groupId,
+          tripCompleted: true // NEW: Flag to show quick navigation
+        });
       } catch (err) {
         Alert.alert('Error', 'Failed to complete group trip');
       }

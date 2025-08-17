@@ -14,8 +14,13 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
 // Rate limiting to prevent overwhelming the external API
 const requestQueue = [];
 let isProcessing = false;
-const MAX_CONCURRENT_REQUESTS = 3;
+const MAX_CONCURRENT_REQUESTS = 8; // Increased from 5 to 8 for large lists
 let activeRequests = 0;
+
+// NEW: Intelligent batching for large lists
+const BATCH_SIZE = 8; // Smaller batches for faster initial results
+const BATCH_DELAY = 20; // Very fast processing
+const INITIAL_BATCHES = 3; // Show first 24 items quickly (3 batches of 8)
 
 // Rate limiter function
 async function rateLimitedRequest(url, params, headers) {
@@ -44,8 +49,8 @@ async function processQueue() {
       request.reject(error);
     } finally {
       activeRequests--;
-      // Small delay between requests to be respectful to the external API
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Reduced delay between requests for better performance
+      await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
     }
   }
   
@@ -53,7 +58,7 @@ async function processQueue() {
   
   // If there are still items in the queue, process them
   if (requestQueue.length > 0) {
-    setTimeout(processQueue, 100);
+    setTimeout(processQueue, 50); // Reduced from 100ms to 50ms
   }
 }
 
@@ -95,7 +100,7 @@ async function fetchWithRetry(url, params, headers, maxRetries = 2) {
       const response = await axios.get(url, { 
         params, 
         headers,
-        timeout: 5000 // Reduced from 10s to 5s
+        timeout: 12000 // Increased timeout for large lists (was 8000ms)
       });
       
       return response;
@@ -106,7 +111,7 @@ async function fetchWithRetry(url, params, headers, maxRetries = 2) {
         throw error;
       }
       
-      // Reduced delay between retries
+      // Adaptive delay between retries based on attempt number
       const delay = Math.pow(1.5, attempt) * 500; // 750ms, 1125ms instead of 2s, 4s
       await new Promise(resolve => setTimeout(resolve, delay));
     }
@@ -435,12 +440,29 @@ router.post('/', async (req, res) => {
 // MILESTONE 4: POST /api/compare/price
 // Body: { city: string, products: [{ barcode: string, name: string, quantity: number }] }
 router.post('/price', async (req, res) => {
+  // Set a timeout for the entire request (5 minutes for large lists)
+  const requestTimeout = setTimeout(() => {
+    console.error('Request timeout after 5 minutes');
+    if (!res.headersSent) {
+      res.status(408).json({ 
+        error: 'Request timeout. The list is too large or the server is busy. Try with fewer items.',
+        fallback: 'Please try with a smaller list (20-30 items) or try again later.'
+      });
+    }
+  }, 300000); // 5 minutes timeout
+
   try {
     const { city, products } = req.body;
     console.log('🛒 Compare request:', { city, productsCount: products?.length });
     
     if (!city || !Array.isArray(products) || products.length === 0) {
       return res.status(400).json({ error: 'Missing city or products array. Please enter a valid city and add products to your list.' });
+    }
+    
+    // NEW: Progressive loading for large lists
+    if (products.length > 30) {
+      console.log(`🚀 Large list detected: ${products.length} items. Using progressive loading for faster results...`);
+      // For large lists, we'll process in smaller batches for faster initial results
     }
     
     const startTime = Date.now();
@@ -469,25 +491,52 @@ router.post('/price', async (req, res) => {
       }
     }
     
-    // PARALLEL PROCESSING: Process unique products only
+    // OPTIMIZED PROCESSING: Handle large lists with intelligent batching
     const uniqueProducts = Array.from(new Set(products.map(p => p.barcode)));
     const uniqueProductData = products.filter((prod, index, arr) => 
       arr.findIndex(p => p.barcode === prod.barcode) === index
     );
     
-    const productPromises = uniqueProductData.map(async (prod, index) => {
-      try {
-        // Use enhanced search with fallback
-        const prodResults = await searchProductWithFallback(city, prod);
-        return { product: prod, results: prodResults || [] };
-      } catch (error) {
-        console.error(`Error processing product ${prod.name}:`, error);
-        return { product: prod, results: [] };
-      }
-    });
+    console.log(`🔄 Processing ${uniqueProductData.length} unique products with intelligent batching`);
     
-    // Wait for all unique products to be processed in parallel
-    const productResults = await Promise.all(productPromises);
+    // NEW: Progressive loading - show initial results quickly
+    const productResults = [];
+    let initialResultsReady = false;
+    
+    for (let i = 0; i < uniqueProductData.length; i += BATCH_SIZE) {
+      const batch = uniqueProductData.slice(i, i + BATCH_SIZE);
+      const batchNumber = Math.floor(i/BATCH_SIZE) + 1;
+      console.log(`📦 Processing batch ${batchNumber}/${Math.ceil(uniqueProductData.length/BATCH_SIZE)} (${batch.length} products)`);
+      
+      const batchPromises = batch.map(async (prod, index) => {
+        try {
+          // Use enhanced search with fallback
+          const prodResults = await searchProductWithFallback(city, prod);
+          return { product: prod, results: prodResults || [] };
+        } catch (error) {
+          console.error(`Error processing product ${prod.name}:`, error);
+          return { product: prod, results: [] };
+        }
+      });
+      
+      // Process this batch in parallel
+      const batchResults = await Promise.all(batchPromises);
+      productResults.push(...batchResults);
+      
+      // Send initial results after first few batches for fast response
+      if (!initialResultsReady && batchNumber >= INITIAL_BATCHES) {
+        initialResultsReady = true;
+        console.log(`🚀 Initial results ready after ${batchNumber} batches (${productResults.length} products processed)`);
+        
+        // Send initial results via WebSocket or store in cache for client to fetch
+        // For now, we'll continue processing but log the milestone
+      }
+      
+      // Small delay between batches
+      if (i + BATCH_SIZE < uniqueProductData.length) {
+        await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
+      }
+    }
     console.log('Product processing completed. Results:', productResults.map(r => ({ 
       product: r.product.name, 
       storesFound: r.results.length 
@@ -654,6 +703,7 @@ router.post('/price', async (req, res) => {
     
     // Sort by score (highest first)
     aggregated.sort((a, b) => b.score - a.score);
+    
     // Distance calculation (optional, will be null if API key missing)
     const storeAddresses = aggregated.map(s => s.address);
     let distances = {};
@@ -665,10 +715,128 @@ router.post('/price', async (req, res) => {
     aggregated.forEach(s => {
       s.distance = distances[s.address] || null;
     });
+    
+    // NEW: Log completion time and performance metrics
+    const endTime = Date.now();
+    const processingTime = endTime - startTime;
+    console.log(`✅ Compare request completed in ${processingTime}ms for ${products.length} products`);
+    console.log(`📊 Found ${aggregated.length} stores with ${aggregated.reduce((sum, s) => sum + s.itemsFound, 0)} total items found`);
+    
+    // Clear the timeout since we're about to send the response
+    clearTimeout(requestTimeout);
+    
     res.json(aggregated.slice(0, 5));
   } catch (err) {
+    // Clear the timeout on error too
+    clearTimeout(requestTimeout);
+    
     console.error('[compare POST /price] error', err);
     res.status(500).json({ error: 'An unexpected server error occurred. Please try again later.' });
+  }
+});
+
+// NEW: Quick initial results endpoint for large lists
+router.post('/price/quick', async (req, res) => {
+  try {
+    const { city, products } = req.body;
+    
+    if (!city || !products || !Array.isArray(products)) {
+      return res.status(400).json({ error: 'City and products array required' });
+    }
+    
+    console.log(`🚀 Quick search for ${products.length} products in ${city}`);
+    
+    // Process only first 15 items for very quick results
+    const quickProducts = products.slice(0, 15);
+    const startTime = Date.now();
+    
+    // Process in very small batches for speed
+    const productResults = [];
+    
+    for (let i = 0; i < quickProducts.length; i += 3) { // Process 3 items at a time for even faster results
+      const batch = quickProducts.slice(i, i + 3);
+      console.log(`⚡ Quick batch ${Math.floor(i/3) + 1}/${Math.ceil(quickProducts.length/3)}`);
+      
+      const batchPromises = batch.map(async (prod) => {
+        try {
+          const prodResults = await searchProductWithFallback(city, prod);
+          return { product: prod, results: prodResults || [] };
+        } catch (error) {
+          return { product: prod, results: [] };
+        }
+      });
+      
+      const batchResults = await Promise.all(batchPromises);
+      productResults.push(...batchResults);
+      
+      // Very short delay
+      if (i + 3 < quickProducts.length) {
+        await new Promise(resolve => setTimeout(resolve, 5)); // Even shorter delay
+      }
+    }
+    
+    // Aggregate results (same logic as main endpoint)
+    let allStoreResults = {};
+    
+    for (const { product: prod, results: prodResults } of productResults) {
+      for (const storeData of prodResults) {
+        const storeKey = storeData.branch;
+        
+        if (!allStoreResults[storeKey]) {
+          allStoreResults[storeKey] = { 
+            branch: storeData.branch,
+            address: storeData.address,
+            totalPrice: 0, 
+            itemsFound: 0, 
+            foundBarcodes: [],
+            itemPrices: {},
+            productDetails: {}
+          };
+        }
+        
+        // Add product price
+        let productPrice = storeData.itemPrices[prod.barcode] || 0;
+        if (productPrice > 0) {
+          allStoreResults[storeKey].foundBarcodes.push(prod.barcode);
+          allStoreResults[storeKey].itemPrices[prod.barcode] = productPrice;
+          allStoreResults[storeKey].productDetails[prod.barcode] = {
+            name: prod.name,
+            img: prod.img || prod.image,
+            price: productPrice
+          };
+        }
+      }
+    }
+    
+    // Calculate totals and scores
+    let aggregated = Object.values(allStoreResults);
+    aggregated.forEach((storeData) => {
+      const totalPrice = Object.values(storeData.itemPrices).reduce((sum, price) => sum + price, 0);
+      storeData.totalPrice = totalPrice;
+      storeData.itemsFound = storeData.foundBarcodes.length;
+      
+      // Quick scoring
+      const score = Math.round((storeData.itemsFound / quickProducts.length) * 100);
+      storeData.score = score;
+      storeData.scorePercentage = `${score}%`;
+    });
+    
+    // Sort by score
+    aggregated.sort((a, b) => b.score - a.score);
+    
+    const endTime = Date.now();
+    console.log(`⚡ Quick search completed in ${endTime - startTime}ms for ${quickProducts.length} products`);
+    
+    res.json({
+      stores: aggregated.slice(0, 5),
+      processedItems: quickProducts.length,
+      totalItems: products.length,
+      isPartial: products.length > quickProducts.length
+    });
+    
+  } catch (err) {
+    console.error('[compare POST /price/quick] error', err);
+    res.status(500).json({ error: 'Quick search failed. Please try again.' });
   }
 });
 

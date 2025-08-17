@@ -28,6 +28,39 @@ const WhereToBuyScreen = ({ route, navigation }) => {
     });
   }, [navigation]);
 
+  // NEW: Add smart back button
+  const handleSmartBack = () => {
+    if (tripType === 'group' && groupId) {
+      Alert.alert(
+        'Navigation Options',
+        'Where would you like to go?',
+        [
+          {
+            text: 'Back to Group List',
+            onPress: () => navigation.goBack(),
+            style: 'default'
+          },
+          {
+            text: 'Smart Suggestions',
+            onPress: () => navigation.navigate('SmartSuggestions', { groupId }),
+            style: 'default'
+          },
+          {
+            text: 'Group Settings',
+            onPress: () => navigation.navigate('GroupDetail', { groupId }),
+            style: 'default'
+          },
+          {
+            text: 'Cancel',
+            style: 'cancel'
+          }
+        ]
+      );
+    } else {
+      navigation.goBack();
+    }
+  };
+
   // Format price to avoid floating point precision issues
   const formatPrice = (price) => {
     if (price === null || price === undefined || price === 'N/A') {
@@ -106,8 +139,23 @@ const WhereToBuyScreen = ({ route, navigation }) => {
     setLoading(true);
     setStores([]);
     try {
-      // Replace with your actual backend endpoint
-      const response = await fetch('http://192.168.201.100:5000/api/compare/price', {
+      // Try full search first, fallback to quick search if it fails
+      let endpoint = '/compare/price';
+      let isQuickSearch = false;
+      
+      if (products.length > 25) {
+        endpoint = '/compare/price/quick';
+        isQuickSearch = true;
+      }
+      
+      console.log(`🔍 Using ${isQuickSearch ? 'quick' : 'full'} search for ${products.length} items`);
+      
+      // Create a timeout promise
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), 30000) // 30 second timeout
+      );
+      
+      const fetchPromise = fetch(`http://192.168.201.100:5000/api${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -121,13 +169,61 @@ const WhereToBuyScreen = ({ route, navigation }) => {
           source,
         }),
       });
+      
+      const response = await Promise.race([fetchPromise, timeoutPromise]);
       if (!response.ok) throw new Error('Failed to fetch stores');
       const data = await response.json();
-      console.log('Store data received:', Array.isArray(data) ? `${data.length} stores` : 'No stores found');
+      
+      if (data.isPartial) {
+        console.log(`⚡ Quick results: ${data.processedItems}/${data.totalItems} items processed`);
+        // Show partial results message
+        setError(`Quick results: ${data.processedItems}/${data.totalItems} items processed. More results loading...`);
+        setTimeout(() => setError(''), 3000); // Clear message after 3 seconds
+      }
+      
+      console.log('Store data received:', Array.isArray(data) ? `${data.length} stores` : `${data.stores?.length || 0} stores`);
       
       setStores(Array.isArray(data) ? data.slice(0, 5) : (data.stores?.slice(0, 5) || []));
     } catch (e) {
-      setError('Could not fetch store data.');
+      console.error('Search error:', e);
+      
+      // If full search failed and we have many items, try quick search as fallback
+      if (!isQuickSearch && products.length > 25) {
+        console.log('🔄 Full search failed, trying quick search as fallback...');
+        try {
+          const quickResponse = await fetch(`http://192.168.201.100:5000/api/compare/price/quick`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              city: locationData.city,
+              products: products.map(p => ({
+                barcode: p.barcode,
+                name: p.name,
+                quantity: p.quantity || 1,
+                image: p.image
+              })),
+              source,
+            }),
+          });
+          
+          if (quickResponse.ok) {
+            const quickData = await quickResponse.json();
+            console.log('✅ Quick search fallback successful');
+            setStores(quickData.stores?.slice(0, 5) || []);
+            setError(`Quick results: ${quickData.processedItems}/${quickData.totalItems} items processed`);
+            setTimeout(() => setError(''), 3000);
+            return;
+          }
+        } catch (fallbackError) {
+          console.error('Quick search fallback also failed:', fallbackError);
+        }
+      }
+      
+      if (e.message === 'Request timeout') {
+        setError('Search is taking too long. Try with fewer items or try again.');
+      } else {
+        setError('Could not fetch store data. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -139,10 +235,21 @@ const WhereToBuyScreen = ({ route, navigation }) => {
       try {
         // Get the products that were actually found/bought from this store
         const foundBarcodes = selectedStore.foundBarcodes || [];
-        const boughtProducts = products.filter(p => foundBarcodes.includes(p.barcode));
+        console.log('🔍 Found barcodes from store:', foundBarcodes);
+        console.log('🔍 All product barcodes:', products.map(p => p.barcode));
+        
+        // More flexible matching - check both barcode and name
+        const boughtProducts = products.filter(p => {
+          const foundByBarcode = foundBarcodes.includes(p.barcode);
+          const foundByName = selectedStore.productDetails && 
+            Object.keys(selectedStore.productDetails).some(key => 
+              selectedStore.productDetails[key].name === p.name
+            );
+          return foundByBarcode || foundByName;
+        });
         
         console.log('Products to mark as bought:', boughtProducts.map(p => p.name));
-        console.log('Products that will be lost:', products.filter(p => !foundBarcodes.includes(p.barcode)).map(p => p.name));
+        console.log('Products that will be kept (not found):', products.filter(p => !boughtProducts.includes(p)).map(p => p.name));
         
         // Get the scraped product details (including images) from the store data
         const boughtProductsWithDetails = boughtProducts.map(p => {
@@ -171,7 +278,10 @@ const WhereToBuyScreen = ({ route, navigation }) => {
         setTimeout(() => {
           console.log('Timeout done, hiding celebration and navigating to GroupSharedList');
           setShowCelebration(false);
-          navigation.navigate('GroupSharedList', { groupId });
+          navigation.navigate('GroupSharedList', { 
+            groupId,
+            tripCompleted: true // NEW: Flag to show quick navigation
+          });
         }, 3000);
       } catch (err) {
         Alert.alert('Error', 'Failed to complete group trip');
@@ -181,7 +291,16 @@ const WhereToBuyScreen = ({ route, navigation }) => {
       try {
         // Get the products that were actually found/bought from this store
         const foundBarcodes = selectedStore.foundBarcodes || [];
-        const boughtProducts = products.filter(p => foundBarcodes.includes(p.barcode));
+        
+        // More flexible matching - check both barcode and name
+        const boughtProducts = products.filter(p => {
+          const foundByBarcode = foundBarcodes.includes(p.barcode);
+          const foundByName = selectedStore.productDetails && 
+            Object.keys(selectedStore.productDetails).some(key => 
+              selectedStore.productDetails[key].name === p.name
+            );
+          return foundByBarcode || foundByName;
+        });
         
         // Ensure bought products have image data
         const boughtProductsWithImages = boughtProducts.map(product => ({
@@ -282,7 +401,7 @@ const WhereToBuyScreen = ({ route, navigation }) => {
       <View style={styles.header}>
         <TouchableOpacity 
           style={styles.backButton} 
-          onPress={() => navigation.goBack()}
+          onPress={handleSmartBack}
         >
           <Ionicons name="arrow-back" size={24} color="#333" />
         </TouchableOpacity>

@@ -89,7 +89,7 @@ class MultiScraper {
       const response = await axios.get(this.sources.chp.baseUrl, { 
         params, 
         headers,
-        timeout: 5000
+        timeout: 8000 // Increased timeout for better reliability with large lists
       });
       
       const $ = cheerio.load(response.data);

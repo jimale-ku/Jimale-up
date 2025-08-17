@@ -19,15 +19,15 @@ const initializeSocketListeners = () => {
   if (!socket) return;
 
   socket.on('connect', () => {
-    console.log('✅ Socket connected:', socket.id);
+    // Silent connection - no console log
   });
 
   socket.on('joinedGroup', (data) => {
-    console.log('👥 Joined group room:', data);
+    // Silent join - no console log
   });
 
   socket.on('listUpdate', (data) => {
-    console.log('📢 Received listUpdate:', data);
+    // Silent update - no console log
   });
 };
 
@@ -57,7 +57,6 @@ export function registerListUpdates(callback) {
   if (!socket) return () => {};
   
   socket.on('listUpdate', (data) => {
-    console.log('📢 List update received in registerListUpdates:', data);
     callback(data);
   });
   return () => socket.off('listUpdate', callback);
@@ -73,7 +72,6 @@ export function registerSuggestionUpdates(callback) {
   if (!socket) return () => {};
   
   socket.on('suggestionUpdate', (data) => {
-    console.log('📊 Suggestion update received:', data);
     callback(data);
   });
   return () => socket.off('suggestionUpdate', callback);
@@ -84,12 +82,10 @@ export function registerGroupNotifications(callback) {
   if (!socket) return () => {};
   
   socket.on('groupCreated', (data) => {
-    console.log('👥 Group created notification received:', data);
     callback(data);
   });
   
   socket.on('memberAdded', (data) => {
-    console.log('👥 Member added notification received:', data);
     callback(data);
   });
   

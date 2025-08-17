@@ -5,7 +5,10 @@ import EventEmitter from 'eventemitter3';
 // API configuration - change IP address to match your computer
 // You can set this via environment variable or change directly here
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://192.168.201.100:5000/api';
-const api = axios.create({ baseURL: API_BASE_URL });
+const api = axios.create({ 
+  baseURL: API_BASE_URL,
+  timeout: 300000 // 5 minutes timeout for large scraping requests
+});
 
 // Performance optimization: Add request caching
 const cache = new Map();

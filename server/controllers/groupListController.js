@@ -133,10 +133,7 @@ exports.completeGroupTrip = async (req, res) => {
       ? boughtProducts 
       : items;
     
-    console.log(`[DEBUG] Completing trip for group ${groupId}`);
-    console.log(`[DEBUG] Total items in list: ${items.length}`);
-    console.log(`[DEBUG] Items to mark as bought: ${itemsToProcess.length}`);
-    console.log(`[DEBUG] Items that will be lost: ${items.length - itemsToProcess.length}`);
+    console.log(`[TRIP] Completing trip for group ${groupId} - ${itemsToProcess.length} bought, ${items.length - itemsToProcess.length} kept`);
 
     // Get next trip number for this group
     const lastTrip = await TripHistory.findOne({ group: groupId })
@@ -167,15 +164,8 @@ exports.completeGroupTrip = async (req, res) => {
 
     // Record each bought item in PurchaseHistory with trip reference
     const now = new Date();
-    console.log('[DEBUG] User ID for purchase:', userId);
-    console.log('[DEBUG] User info:', user);
     
     for (const boughtItem of itemsToProcess) {
-      console.log('[DEBUG] Creating purchase record for:', {
-        name: boughtItem.name,
-        img: boughtItem.img ? 'Has image' : 'No image',
-        icon: boughtItem.icon ? 'Has icon' : 'No icon'
-      });
       
       await PurchaseHistory.create({
         name: boughtItem.name,
@@ -190,18 +180,41 @@ exports.completeGroupTrip = async (req, res) => {
       });
     }
 
-    // Clear the entire list (all items are lost, only bought items go to "Last Bought")
+    // FIXED: Only delete items that were actually bought, keep "not found" items
+    const itemsToDelete = [];
+    const itemsToKeep = [];
+    
     for (const item of items) {
-      await Item.findByIdAndDelete(item._id);
+      if (itemsToProcess.some(boughtItem => 
+        boughtItem._id === item._id || 
+        boughtItem.id === item._id || 
+        boughtItem.productId === item._id ||
+        boughtItem.barcode === item.barcode
+      )) {
+        // This item was bought - delete it
+        itemsToDelete.push(item._id);
+      } else {
+        // This item was not found - keep it for future searches
+        itemsToKeep.push(item._id);
+      }
     }
-    list.items = [];
+    
+    // Delete only the bought items
+    if (itemsToDelete.length > 0) {
+      await Item.deleteMany({ _id: { $in: itemsToDelete } });
+    }
+    
+    // Update the list to only contain the "not found" items
+    list.items = itemsToKeep;
     await list.save();
     
     res.json({ 
       message: 'Trip completed', 
       tripNumber,
       boughtAt: now,
-      tripId: tripHistory._id
+      tripId: tripHistory._id,
+      itemsBought: itemsToProcess.length,
+      itemsKept: itemsToKeep.length
     });
   } catch (err) {
     console.error('Error in completeGroupTrip:', err);

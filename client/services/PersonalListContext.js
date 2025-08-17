@@ -32,7 +32,21 @@ export const PersonalListProvider = ({ children }) => {
     // Update last bought and store
     setLastBought(itemsToMove);
     setLastStore(storeInfo || null);
-    setPersonalList([]);
+    
+    // FIXED: Only remove bought items, keep "not found" items for future searches
+    if (boughtProducts && boughtProducts.length > 0) {
+      // Create a set of bought item IDs for efficient lookup
+      const boughtItemIds = new Set(boughtProducts.map(item => item._id || item.id || item.productId));
+      
+      // Keep only items that were not bought (not found items)
+      setPersonalList(prev => prev.filter(item => !boughtItemIds.has(item._id || item.id || item.productId)));
+      
+      console.log(`[DEBUG] Personal trip: Moved ${boughtProducts.length} bought items to last bought`);
+      console.log(`[DEBUG] Personal trip: Kept ${personalList.length - boughtProducts.length} not-found items in list`);
+    } else {
+      // Fallback: clear entire list (old behavior)
+      setPersonalList([]);
+    }
   };
 
   // Select a specific trip from history
