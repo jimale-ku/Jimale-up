@@ -1,0 +1,18 @@
+warning: in the working copy of 'client/screens/WhereToBuyScreen.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/routes/compareRoutes.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/server.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/services/multiScraper.js', LF will be replaced by CRLF the next time Git touches it
+LARGE_LIST_OPTIMIZATION.md
+NAVIGATION_UX_IMPROVEMENTS.md
+PERFORMANCE_OPTIMIZATIONS.md
+TEST_README.md
+client/screens/WhereToBuyScreen.js
+debug_routes.js
+run_test.js
+server/routes/compareRoutes.js
+server/server.js
+server/services/multiScraper.js
+simple_test.js
+test_compare_route.js
+test_large_list.js
+test_route_structure.js

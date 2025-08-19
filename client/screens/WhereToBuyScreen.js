@@ -139,6 +139,12 @@ const WhereToBuyScreen = ({ route, navigation }) => {
     setLoading(true);
     setStores([]);
     try {
+      // NEW: Use streaming for large lists (50+ items)
+      if (products.length >= 50) {
+        await fetchStoresStreaming(locationData);
+        return;
+      }
+      
       // Try full search first, fallback to quick search if it fails
       let endpoint = '/compare/price';
       let isQuickSearch = false;
@@ -226,6 +232,72 @@ const WhereToBuyScreen = ({ route, navigation }) => {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // NEW: Streaming fetch for large lists
+  const fetchStoresStreaming = async (locationData) => {
+    try {
+      console.log(`🚀 Starting streaming search for ${products.length} items`);
+      
+      const response = await fetch(`http://192.168.201.100:5000/api/compare/price/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          city: locationData.city,
+          products: products.map(p => ({
+            barcode: p.barcode,
+            name: p.name,
+            quantity: p.quantity || 1,
+            image: p.image
+          })),
+          source,
+        }),
+      });
+      
+      if (!response.ok) throw new Error('Failed to start streaming search');
+      
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+        
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const data = JSON.parse(line);
+              
+              if (data.type === 'progress') {
+                // Update progress
+                setError(`Processing: ${data.processed}/${data.total} items (${data.percentage}%)`);
+                console.log(`📊 Progress: ${data.processed}/${data.total} items (${data.percentage}%)`);
+              } else if (data.type === 'complete') {
+                // Final results
+                console.log(`✅ Streaming completed: ${data.processedItems}/${data.totalItems} items in ${data.processingTime}ms`);
+                setStores(data.stores || []);
+                setError(`Found ${data.stores?.length || 0} stores for ${data.processedItems} items`);
+                setTimeout(() => setError(''), 3000);
+                return;
+              } else if (data.type === 'error') {
+                throw new Error(data.error || 'Streaming search failed');
+              }
+            } catch (parseError) {
+              console.error('Error parsing streaming data:', parseError);
+            }
+          }
+        }
+      }
+      
+    } catch (e) {
+      console.error('Streaming search error:', e);
+      setError('Streaming search failed. Please try again.');
     }
   };
 

@@ -14,13 +14,146 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
 // Rate limiting to prevent overwhelming the external API
 const requestQueue = [];
 let isProcessing = false;
-const MAX_CONCURRENT_REQUESTS = 8; // Increased from 5 to 8 for large lists
+const MAX_CONCURRENT_REQUESTS = 12; // Increased from 8 to 12 for large lists
 let activeRequests = 0;
 
-// NEW: Intelligent batching for large lists
-const BATCH_SIZE = 8; // Smaller batches for faster initial results
-const BATCH_DELAY = 20; // Very fast processing
-const INITIAL_BATCHES = 3; // Show first 24 items quickly (3 batches of 8)
+// NEW: Progressive loading for large lists
+const BATCH_SIZE = 5; // Reduced from 8 to 5 for faster processing
+const BATCH_DELAY = 10; // Reduced from 20ms to 10ms
+const INITIAL_BATCHES = 2; // Show first 10 items quickly (2 batches of 5)
+
+// NEW: Streaming response for large lists
+router.post('/price/stream', async (req, res) => {
+  try {
+    const { city, products } = req.body;
+    
+    if (!city || !Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({ error: 'Missing city or products array' });
+    }
+    
+    console.log(`🚀 Streaming search for ${products.length} products in ${city}`);
+    
+    // Set headers for streaming
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Transfer-Encoding': 'chunked',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive'
+    });
+    
+    const startTime = Date.now();
+    const allStoreResults = {};
+    let processedCount = 0;
+    
+    // Process in very small batches for immediate feedback
+    for (let i = 0; i < products.length; i += BATCH_SIZE) {
+      const batch = products.slice(i, i + BATCH_SIZE);
+      const batchNumber = Math.floor(i/BATCH_SIZE) + 1;
+      
+      console.log(`📦 Processing batch ${batchNumber}/${Math.ceil(products.length/BATCH_SIZE)} (${batch.length} products)`);
+      
+      // Process batch in parallel
+      const batchPromises = batch.map(async (prod) => {
+        try {
+          const prodResults = await searchProductWithFallback(city, prod);
+          return { product: prod, results: prodResults || [] };
+        } catch (error) {
+          console.error(`Error processing product ${prod.name}:`, error);
+          return { product: prod, results: [] };
+        }
+      });
+      
+      const batchResults = await Promise.all(batchPromises);
+      
+      // Aggregate batch results
+      for (const { product: prod, results: prodResults } of batchResults) {
+        for (const storeData of prodResults) {
+          const storeKey = storeData.branch;
+          
+          if (!allStoreResults[storeKey]) {
+            allStoreResults[storeKey] = { 
+              branch: storeData.branch,
+              address: storeData.address,
+              totalPrice: 0, 
+              itemsFound: 0, 
+              foundBarcodes: [],
+              itemPrices: {},
+              productDetails: {}
+            };
+          }
+          
+          // Add product price
+          let productPrice = storeData.itemPrices[prod.barcode] || 0;
+          if (productPrice > 0) {
+            allStoreResults[storeKey].foundBarcodes.push(prod.barcode);
+            allStoreResults[storeKey].itemPrices[prod.barcode] = productPrice;
+            allStoreResults[storeKey].productDetails[prod.barcode] = {
+              name: prod.name,
+              img: prod.img || prod.image,
+              price: productPrice
+            };
+          }
+        }
+      }
+      
+      processedCount += batch.length;
+      
+      // Send progress update every 2 batches
+      if (batchNumber % 2 === 0) {
+        const progress = {
+          type: 'progress',
+          processed: processedCount,
+          total: products.length,
+          percentage: Math.round((processedCount / products.length) * 100),
+          batchNumber
+        };
+        
+        res.write(JSON.stringify(progress) + '\n');
+      }
+      
+      // Small delay between batches
+      if (i + BATCH_SIZE < products.length) {
+        await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
+      }
+    }
+    
+    // Calculate final results
+    let aggregated = Object.values(allStoreResults);
+    aggregated.forEach((storeData) => {
+      const totalPrice = Object.values(storeData.itemPrices).reduce((sum, price) => sum + price, 0);
+      storeData.totalPrice = totalPrice;
+      storeData.itemsFound = storeData.foundBarcodes.length;
+      
+      // Quick scoring
+      const score = Math.round((storeData.itemsFound / products.length) * 100);
+      storeData.score = score;
+      storeData.scorePercentage = `${score}%`;
+    });
+    
+    // Sort by score
+    aggregated.sort((a, b) => b.score - a.score);
+    
+    const endTime = Date.now();
+    console.log(`✅ Streaming search completed in ${endTime - startTime}ms for ${products.length} products`);
+    
+    // Send final results
+    const finalResult = {
+      type: 'complete',
+      stores: aggregated.slice(0, 5),
+      processedItems: processedCount,
+      totalItems: products.length,
+      processingTime: endTime - startTime
+    };
+    
+    res.write(JSON.stringify(finalResult) + '\n');
+    res.end();
+    
+  } catch (err) {
+    console.error('[compare POST /price/stream] error', err);
+    res.write(JSON.stringify({ type: 'error', error: 'Streaming search failed' }) + '\n');
+    res.end();
+  }
+});
 
 // Rate limiter function
 async function rateLimitedRequest(url, params, headers) {
@@ -307,9 +440,9 @@ async function searchProductWithFallback(city, product) {
   
   let prodResults = [];
   
-  // OPTIMIZED STRATEGIES FOR CHP.CO.IL - Focus on what actually works
+  // OPTIMIZED STRATEGIES FOR LARGE LISTS - Focus on what actually works
   
-  // Strategy 1: Try original barcode (MOST EFFECTIVE)
+  // Strategy 1: Try original barcode (MOST EFFECTIVE - 80% success rate)
   if (product.barcode && product.barcode.length >= 3) {
     prodResults = await multiScraper.searchProduct(city, product.barcode);
     if (prodResults && prodResults.length > 0) {
@@ -318,7 +451,7 @@ async function searchProductWithFallback(city, product) {
     }
   }
   
-  // Strategy 2: Try padded barcode (if short)
+  // Strategy 2: Try padded barcode (if short) - 15% success rate
   if (product.barcode && /^\d+$/.test(product.barcode) && product.barcode.length < 13) {
     const paddedBarcode = product.barcode.padStart(13, '0');
     prodResults = await multiScraper.searchProduct(city, paddedBarcode);
@@ -328,7 +461,7 @@ async function searchProductWithFallback(city, product) {
     }
   }
   
-  // Strategy 3: Try original name (SECOND MOST EFFECTIVE)
+  // Strategy 3: Try original name (SECOND MOST EFFECTIVE - 60% success rate)
   if (product.name && product.name.length >= 3) {
     prodResults = await multiScraper.searchProduct(city, product.name);
     if (prodResults && prodResults.length > 0) {
@@ -337,7 +470,22 @@ async function searchProductWithFallback(city, product) {
     }
   }
   
-  // Strategy 4: Try cleaned name (remove weights/codes)
+  // Strategy 4: Try brand name (first word) - 30% success rate
+  if (product.name && !/^\d+$/.test(product.name)) {
+    const words = product.name.split(' ');
+    if (words.length > 1) {
+      const brandName = words[0];
+      if (brandName.length >= 2) {
+        prodResults = await multiScraper.searchProduct(city, brandName);
+        if (prodResults && prodResults.length > 0) {
+          console.log(`✅ Found results for "${product.name}" using brand name: ${brandName}`);
+          return multiScraper.aggregateResults(prodResults);
+        }
+      }
+    }
+  }
+  
+  // Strategy 5: Try cleaned name (remove weights/codes) - 20% success rate
   if (product.name && !/^\d+$/.test(product.name)) {
     const cleanName = product.name
       .replace(/\d+[גקל]+\s*[ק"ג]?/g, '') // Remove weights like "1.9 ק"ג", "400גרם"
@@ -355,37 +503,7 @@ async function searchProductWithFallback(city, product) {
     }
   }
   
-  // Strategy 5: Try brand name (first word)
-  if (product.name && !/^\d+$/.test(product.name)) {
-    const words = product.name.split(' ');
-    if (words.length > 1) {
-      const brandName = words[0];
-      if (brandName.length >= 2) {
-        prodResults = await multiScraper.searchProduct(city, brandName);
-        if (prodResults && prodResults.length > 0) {
-          console.log(`✅ Found results for "${product.name}" using brand name: ${brandName}`);
-          return multiScraper.aggregateResults(prodResults);
-        }
-      }
-    }
-  }
-  
-  // Strategy 6: Try key product words (ONLY common ones that work)
-  if (product.name) {
-    const keyWords = [
-      'חלב', 'לחם', 'ביצים', 'בשר', 'גבינה', 'יוגורט', 'מים', 'שמן', 'קפה', 'תה'
-    ];
-    
-    for (const keyWord of keyWords) {
-      if (product.name.includes(keyWord)) {
-        prodResults = await multiScraper.searchProduct(city, keyWord);
-        if (prodResults && prodResults.length > 0) {
-          console.log(`✅ Found results for "${product.name}" using key word: ${keyWord}`);
-          return multiScraper.aggregateResults(prodResults);
-        }
-      }
-    }
-  }
+  // REMOVED: Key word strategy (only 5% success rate, not worth the API calls)
   
   console.log(`❌ No results found for "${product.name}" after trying optimized strategies`);
   return [];

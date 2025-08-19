@@ -130,3 +130,4 @@ The test does NOT cover:
 - Real scraping integration
 - UI interactions
 - Performance testing
+
