@@ -10,7 +10,7 @@ class MultiScraper {
         baseUrl: 'https://chp.co.il/main_page/compare_results',
         enabled: true
       },
-                    shufersal: {
+      shufersal: {
          name: 'Shufersal',
          baseUrl: 'https://www.shufersal.co.il',
          enabled: false // Disabled - not working (441 char responses)
@@ -63,91 +63,168 @@ class MultiScraper {
     }
   }
 
-  // CHP scraping (existing logic)
+  // CHP scraping with autocompletion (NEW WORKING LOGIC)
   async searchCHP(city, searchTerm) {
-    const streetId = 9000;
-    const cityId = 0;
-    
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
-      'Connection': 'keep-alive',
-      'Referer': 'https://chp.co.il/'
-    };
-
     try {
-      const params = {
-        shopping_address: city,
-        shopping_address_street_id: streetId,
-        shopping_address_city_id: cityId,
-        product_barcode: searchTerm,
-        from: 0,
-        num_results: 30,
-      };
+      // Step 1: Get product suggestions from autocompletion API
+      console.log(`🔍 CHP: Getting product suggestions for "${searchTerm}"`);
       
-      const response = await axios.get(this.sources.chp.baseUrl, { 
-        params, 
-        headers,
-        timeout: 15000 // Increased timeout for better reliability with large lists
+      const autocompletionResponse = await axios.get('https://chp.co.il/autocompletion/product_extended', {
+        params: {
+          term: searchTerm,
+          limit: 10
+        },
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Connection': 'keep-alive',
+          'Referer': 'https://chp.co.il/',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        timeout: 15000
       });
       
-      const $ = cheerio.load(response.data);
-      const results = [];
-
-      // Parse CHP results with flexible column detection
-      $('.results-table tbody tr').each((i, row) => {
-        const $row = $(row);
-        const cells = $row.find('td');
+      if (!autocompletionResponse.data || autocompletionResponse.data.length === 0) {
+        console.log(`❌ CHP: No product suggestions found for "${searchTerm}"`);
+        return [];
+      }
+      
+      console.log(`✅ CHP: Found ${autocompletionResponse.data.length} product suggestions`);
+      
+      // Step 2: Try each suggested product
+      const allResults = [];
+      
+      for (const suggestion of autocompletionResponse.data) {
+        if (suggestion.id === 'next') continue; // Skip "show more" option
         
-        if (cells.length >= 5) {
-          const storeName = cells.eq(0).text().trim();
-          const branch = cells.eq(1).text().trim();
-          const address = cells.eq(2).text().trim();
+        const productId = suggestion.id;
+        const productName = suggestion.value;
+        
+        console.log(`🔍 CHP: Trying product "${productName}" (ID: ${productId})`);
+        
+        try {
+          // Step 3: Get city ID from autocompletion
+          const cityResponse = await axios.get('https://chp.co.il/autocompletion/shopping_address', {
+            params: {
+              term: city,
+              limit: 5
+            },
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'application/json, text/plain, */*',
+              'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
+              'Connection': 'keep-alive',
+              'Referer': 'https://chp.co.il/',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            timeout: 10000
+          });
           
-          // Try to find price in different columns
-          let priceText = '';
-          let quantityText = '';
-          
-          // Get text from columns 4 and 5
-          const col4Text = cells.eq(3).text().trim();
-          const col5Text = cells.eq(4).text().trim();
-          
-          // Priority: Column 4 (discounted price) if available, otherwise Column 5 (original price)
-          if (/^\d+\.?\d*$/.test(col4Text)) {
-            // Column 4 has a valid price (discounted price)
-            priceText = col4Text;
-            quantityText = col5Text;
-          } else if (/^\d+\.?\d*$/.test(col5Text)) {
-            // Column 4 is empty/invalid, use Column 5 (original price)
-            priceText = col5Text;
-            quantityText = col4Text;
+          let cityId = '8600_9000'; // Default fallback
+          if (cityResponse.data && cityResponse.data.length > 0) {
+            cityId = cityResponse.data[0].id;
           }
           
-          if (branch && address && priceText) {
-            const price = parseFloat(priceText.replace(/[^\d.]/g, ''));
-            const quantity = parseInt(quantityText.replace(/[^\d]/g, '')) || 1;
+          // Step 4: Get price comparison using the correct product ID
+          const compareResponse = await axios.post('https://chp.co.il/main_page/compare_results', {
+            shopping_address: city,
+            shopping_address_street_id: 9000,
+            shopping_address_city_id: 0,
+            product_barcode: productId,
+            from: 0,
+            num_results: 30
+          }, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+              'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Connection': 'keep-alive',
+              'Referer': 'https://chp.co.il/'
+            },
+            timeout: 15000
+          });
+          
+          // Check if we got results (not "product not found")
+          if (compareResponse.data.includes('המוצר שחיפשתם לא נמצא')) {
+            console.log(`❌ CHP: Product not found for "${productName}"`);
+            continue;
+          }
+          
+          // Parse the results
+          const $ = cheerio.load(compareResponse.data);
+          const results = [];
+
+          // Parse CHP results with flexible column detection
+          $('.results-table tbody tr').each((i, row) => {
+            const $row = $(row);
+            const cells = $row.find('td');
             
-            if (!isNaN(price) && price > 0) {
-              results.push({
-                source: 'chp',
-                branch,
-                address,
-                price,
-                quantity,
-                searchTerm
-              });
+            if (cells.length >= 5) {
+              const storeName = cells.eq(0).text().trim();
+              const branch = cells.eq(1).text().trim();
+              const address = cells.eq(2).text().trim();
+              
+              // Try to find price in different columns
+              let priceText = '';
+              let quantityText = '';
+              
+              // Get text from columns 4 and 5
+              const col4Text = cells.eq(3).text().trim();
+              const col5Text = cells.eq(4).text().trim();
+              
+              // Priority: Column 4 (discounted price) if available, otherwise Column 5 (original price)
+              if (/^\d+\.?\d*$/.test(col4Text)) {
+                // Column 4 has a valid price (discounted price)
+                priceText = col4Text;
+                quantityText = col5Text;
+              } else if (/^\d+\.?\d*$/.test(col5Text)) {
+                // Column 4 is empty/invalid, use Column 5 (original price)
+                priceText = col5Text;
+                quantityText = col4Text;
+              }
+              
+              if (branch && address && priceText) {
+                const price = parseFloat(priceText.replace(/[^\d.]/g, ''));
+                const quantity = parseInt(quantityText.replace(/[^\d]/g, '')) || 1;
+                
+                if (!isNaN(price) && price > 0) {
+                  results.push({
+                    source: 'chp',
+                    branch,
+                    address,
+                    price,
+                    quantity,
+                    searchTerm: productName // Use the actual product name that worked
+                  });
+                }
+              }
             }
+          });
+          
+          if (results.length > 0) {
+            console.log(`✅ CHP: Found ${results.length} results for "${productName}"`);
+            allResults.push(...results);
+            break; // Found results, no need to try more suggestions
           }
+          
+        } catch (error) {
+          console.error(`❌ CHP: Error with product "${productName}":`, error.message);
+          continue;
         }
-      });
+      }
       
-      return results;
+      console.log(`✅ CHP: Total results found: ${allResults.length}`);
+      return allResults;
+      
     } catch (error) {
       console.error('CHP scraping error:', error.message);
       return [];
     }
   }
+
+
 
   // Shufersal scraping - Real web scraping
   async searchShufersal(city, searchTerm) {

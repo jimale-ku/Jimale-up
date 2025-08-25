@@ -138,6 +138,11 @@ const WhereToBuyScreen = ({ route, navigation }) => {
     setError('');
     setLoading(true);
     setStores([]);
+    
+    console.log('🔍 Starting store search for city:', locationData.city);
+    console.log('🔍 Products count:', products.length);
+    console.log('🔍 API Base URL:', 'http://192.168.201.100:5000/api');
+    
     try {
       // NEW: Use streaming for large lists (50+ items)
       if (products.length >= 50) {
@@ -156,42 +161,66 @@ const WhereToBuyScreen = ({ route, navigation }) => {
       
       console.log(`🔍 Using ${isQuickSearch ? 'quick' : 'full'} search for ${products.length} items`);
       
-      // Create a timeout promise
+      // Create a timeout promise - match API timeout (5 minutes)
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Request timeout')), 30000) // 30 second timeout
+        setTimeout(() => reject(new Error('Request timeout')), 300000) // 5 minutes timeout
       );
       
+      // Use the configured API base URL instead of hardcoded IP
       const fetchPromise = fetch(`http://192.168.201.100:5000/api${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          city: locationData.city, // Fix: Use the parameter instead of state
+          city: locationData.city,
           products: products.map(p => ({
             barcode: p.barcode,
             name: p.name,
             quantity: p.quantity || 1,
-            image: p.image // Keep image data for display
+            image: p.image
           })),
           source,
         }),
       });
       
       const response = await Promise.race([fetchPromise, timeoutPromise]);
-      if (!response.ok) throw new Error('Failed to fetch stores');
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Server response error:', response.status, errorText);
+        throw new Error(`Server error: ${response.status} - ${errorText}`);
+      }
+      
       const data = await response.json();
       
       if (data.isPartial) {
         console.log(`⚡ Quick results: ${data.processedItems}/${data.totalItems} items processed`);
-        // Show partial results message
         setError(`Quick results: ${data.processedItems}/${data.totalItems} items processed. More results loading...`);
-        setTimeout(() => setError(''), 3000); // Clear message after 3 seconds
+        setTimeout(() => setError(''), 3000);
       }
       
       console.log('Store data received:', Array.isArray(data) ? `${data.length} stores` : `${data.stores?.length || 0} stores`);
       
-      setStores(Array.isArray(data) ? data.slice(0, 5) : (data.stores?.slice(0, 5) || []));
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      const storesData = Array.isArray(data) ? data : (data.stores || []);
+      
+      if (storesData.length === 0) {
+        setError(`No stores found for "${locationData.city}". Try a different city or check your product list.`);
+        return;
+      }
+      
+      setStores(storesData.slice(0, 5));
+      
     } catch (e) {
-      console.error('Search error:', e);
+      console.error('❌ Search error details:', {
+        message: e.message,
+        stack: e.stack,
+        city: locationData.city,
+        productsCount: products.length,
+        timestamp: new Date().toISOString()
+      });
       
       // If full search failed and we have many items, try quick search as fallback
       if (!isQuickSearch && products.length > 25) {
@@ -225,10 +254,15 @@ const WhereToBuyScreen = ({ route, navigation }) => {
         }
       }
       
+      // Enhanced error messages
       if (e.message === 'Request timeout') {
         setError('Search is taking too long. Try with fewer items or try again.');
+      } else if (e.message.includes('fetch')) {
+        setError('Network error. Please check your connection and try again.');
+      } else if (e.message.includes('Server error')) {
+        setError(`Server error: ${e.message}`);
       } else {
-        setError('Could not fetch store data. Please try again.');
+        setError(`Could not fetch store data: ${e.message}`);
       }
     } finally {
       setLoading(false);

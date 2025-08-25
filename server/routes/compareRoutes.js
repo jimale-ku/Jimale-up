@@ -436,7 +436,10 @@ async function fetchCompare(locationCity, searchTerm) {
 // Enhanced product search with aggressive fallback strategies
 async function searchProductWithFallback(city, product) {
   const MultiScraper = require('../services/multiScraper');
+  const AlternativeScraper = require('../services/alternativeScraper');
+  
   const multiScraper = new MultiScraper();
+  const alternativeScraper = new AlternativeScraper();
   
   let prodResults = [];
   
@@ -503,9 +506,33 @@ async function searchProductWithFallback(city, product) {
     }
   }
   
-  // REMOVED: Key word strategy (only 5% success rate, not worth the API calls)
+  // NEW: Fallback to Alternative Scraper when CHP fails
+  console.log(`🔄 CHP failed for "${product.name}", trying alternative sources...`);
   
-  console.log(`❌ No results found for "${product.name}" after trying optimized strategies`);
+  try {
+    // Try alternative scraper with the product name
+    const alternativeResults = await alternativeScraper.searchProduct(city, product.name);
+    
+    if (alternativeResults && alternativeResults.length > 0) {
+      console.log(`✅ Alternative scraper found ${alternativeResults.length} results for "${product.name}"`);
+      return alternativeScraper.aggregateResults(alternativeResults);
+    }
+    
+    // If no results with name, try with barcode
+    if (product.barcode && product.barcode.length >= 3) {
+      const alternativeBarcodeResults = await alternativeScraper.searchProduct(city, product.barcode);
+      
+      if (alternativeBarcodeResults && alternativeBarcodeResults.length > 0) {
+        console.log(`✅ Alternative scraper found ${alternativeBarcodeResults.length} results using barcode: ${product.barcode}`);
+        return alternativeScraper.aggregateResults(alternativeBarcodeResults);
+      }
+    }
+    
+  } catch (error) {
+    console.error(`❌ Alternative scraper failed for "${product.name}":`, error.message);
+  }
+  
+  console.log(`❌ No results found for "${product.name}" after trying all strategies`);
   return [];
 }
 
